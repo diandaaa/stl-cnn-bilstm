@@ -452,8 +452,9 @@ with t2:
                 st.success("✅ season_model.pt tersimpan")
 
         if "bytes_trend" in st.session_state and "bytes_season" in st.session_state:
-            if st.button("🚀 Load Model & Lanjut ke Forecast", type="primary"):
-                import io
+            # Auto-load begitu kedua file tersedia — tidak pakai button agar tidak rerun
+            import io
+            if "trained" not in st.session_state:
                 try:
                     TM = TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
                     SM = SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
@@ -467,10 +468,11 @@ with t2:
                         trend_train_s=trend_train_s, trend_val_s=trend_val_s,
                         season_train_s=season_train_s, season_val_s=season_val_s,
                     ))
-                    st.success("✅ Model berhasil dimuat! Langsung ke tab 🎯 Forecast Results.")
                 except Exception as e:
                     st.error(f"❌ Gagal load model: {e}")
                     st.warning("Pastikan parameter model (lookback, filters, units) sama dengan saat training di Colab.")
+            if "trained" in st.session_state:
+                st.success("✅ Model berhasil dimuat! Buka tab 🎯 Forecast Results.")
         else:
             st.warning("Upload kedua file .pt untuk melanjutkan.")
 
