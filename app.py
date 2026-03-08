@@ -234,9 +234,9 @@ with st.sidebar:
     s_lr    =st.number_input("LR seasonal", value=0.0005,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",  30,365,180,10,
-        help="180 = sama seperti Colab (akurat). Turunkan ke 90 untuk 2× lebih cepat.")
-    epochs    =st.slider("Max epochs",10,500,150,10,
+    lookback  =st.slider("Lookback",  30,365,90,10,
+        help="90 = ~3-5 menit di CPU. Naikkan ke 180 untuk hasil persis Colab (lebih lama).")
+    epochs    =st.slider("Max epochs",10,500,100,10,
         help="Early stopping patience=20 aktif — biasanya berhenti jauh sebelum max.")
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=3,
         help="128 lebih cepat dari 64 tanpa pengaruh signifikan ke akurasi.")
@@ -424,38 +424,83 @@ with t1:
 
 # ══════ TAB 2: TRAINING ═══════════════════════════════════════
 with t2:
-    sec("🤖 Training CNN-BiLSTM")
-    col1,col2=st.columns(2)
-    with col1:
-        st.markdown("#### 🔵 Trend Model")
-        st.caption(f"Conv1D({t_conv_f},k={t_kern},causal) → BiLSTM({t_lstm}) → Dropout({t_drop}) → Dense({t_dense}) → Dense(1)")
-        prog=st.progress(0,text="Training…")
-        TM=TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
-        ht_tr,ht_val=train_model(TM,Xtt,ytt,Xvt,yvt,epochs,batch_size,t_lr, patience=20)
-        prog.progress(100,text=f"Done · {len(ht_tr)} epochs")
-        fig,ax=plt.subplots(figsize=(6,3))
-        ax.plot(ht_tr,color=PAL["train"],lw=1.4,label="Train")
-        ax.plot(ht_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
-        ax.set_title("Trend – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
-        st.pyplot(fig,use_container_width=True); plt.close(fig)
-    with col2:
-        st.markdown("#### 🟠 Seasonal Model")
-        st.caption(f"Conv1D({s_conv_f},k={s_kern},causal) → BiLSTM({s_lstm}) → Dense({s_dense}) → Dense(1)  [no dropout]")
-        prog2=st.progress(0,text="Training…")
-        SM=SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
-        hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr, patience=20)
-        prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
-        fig,ax=plt.subplots(figsize=(6,3))
-        ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train")
-        ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
-        ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
-        st.pyplot(fig,use_container_width=True); plt.close(fig)
+    # ── Mode selector ─────────────────────────────────────────
+    mode = st.radio("Mode", ["⬆️ Upload Model (.pt) dari Colab", "🏋️ Train dari Awal"],
+                    horizontal=True)
 
-    st.session_state.update(dict(
-        trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
-        trend_train_s=trend_train_s, trend_val_s=trend_val_s,
-        season_train_s=season_train_s, season_val_s=season_val_s,
-    ))
+    if mode == "⬆️ Upload Model (.pt) dari Colab":
+        st.info("""
+**Cara pakai:**
+1. Di Colab, setelah training selesai tambahkan:
+```python
+import torch
+torch.save(trend_model.state_dict(), 'trend_model.pt')
+torch.save(season_model.state_dict(), 'season_model.pt')
+```
+2. Download kedua file dari Colab
+3. Upload di sini → langsung predict tanpa training ulang
+        """)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 🔵 Trend Model (.pt)")
+            up_t = st.file_uploader("Upload trend_model.pt", type=["pt"], key="up_trend")
+        with col2:
+            st.markdown("#### 🟠 Seasonal Model (.pt)")
+            up_s = st.file_uploader("Upload season_model.pt", type=["pt"], key="up_season")
+
+        if up_t and up_s:
+            import io
+            try:
+                TM = TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
+                SM = SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
+                TM.load_state_dict(torch.load(io.BytesIO(up_t.read()), map_location="cpu"))
+                SM.load_state_dict(torch.load(io.BytesIO(up_s.read()), map_location="cpu"))
+                TM.eval(); SM.eval()
+                st.success("✅ Model berhasil dimuat! Langsung ke tab 🎯 Forecast Results.")
+                st.session_state.update(dict(
+                    trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
+                    trend_train_s=trend_train_s, trend_val_s=trend_val_s,
+                    season_train_s=season_train_s, season_val_s=season_val_s,
+                ))
+            except Exception as e:
+                st.error(f"❌ Gagal load model: {e}")
+                st.warning("Pastikan parameter model (lookback, filters, units) sama dengan saat training di Colab.")
+        else:
+            st.warning("Upload kedua file .pt untuk melanjutkan.")
+
+    else:
+        sec("🤖 Training CNN-BiLSTM")
+        col1,col2=st.columns(2)
+        with col1:
+            st.markdown("#### 🔵 Trend Model")
+            st.caption(f"Conv1D({t_conv_f},k={t_kern},causal) → BiLSTM({t_lstm}) → Dropout({t_drop}) → Dense({t_dense}) → Dense(1)")
+            prog=st.progress(0,text="Training…")
+            TM=TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
+            ht_tr,ht_val=train_model(TM,Xtt,ytt,Xvt,yvt,epochs,batch_size,t_lr, patience=20)
+            prog.progress(100,text=f"Done · {len(ht_tr)} epochs")
+            fig,ax=plt.subplots(figsize=(6,3))
+            ax.plot(ht_tr,color=PAL["train"],lw=1.4,label="Train")
+            ax.plot(ht_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
+            ax.set_title("Trend – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
+            st.pyplot(fig,use_container_width=True); plt.close(fig)
+        with col2:
+            st.markdown("#### 🟠 Seasonal Model")
+            st.caption(f"Conv1D({s_conv_f},k={s_kern},causal) → BiLSTM({s_lstm}) → Dense({s_dense}) → Dense(1)  [no dropout]")
+            prog2=st.progress(0,text="Training…")
+            SM=SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
+            hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr, patience=20)
+            prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
+            fig,ax=plt.subplots(figsize=(6,3))
+            ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train")
+            ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
+            ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
+            st.pyplot(fig,use_container_width=True); plt.close(fig)
+
+        st.session_state.update(dict(
+            trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
+            trend_train_s=trend_train_s, trend_val_s=trend_val_s,
+            season_train_s=season_train_s, season_val_s=season_val_s,
+        ))
 
 # ══════ TAB 3: FORECAST ═══════════════════════════════════════
 with t3:
@@ -475,13 +520,27 @@ with t3:
         sp_tr=sc_s.inverse_transform(predict_model(SM,Xts).reshape(-1,1)).flatten()
         sp_vl=sc_s.inverse_transform(predict_model(SM,Xvs).reshape(-1,1)).flatten()
 
-        # ── Test: recursive dari window terakhir trainval ─────
+        # ── Test Trend: recursive dari window terakhir trainval ──
         window_t=np.concatenate([trend_train_s, trend_val_s])[-lookback:]
-        window_s=np.concatenate([season_train_s,season_val_s])[-lookback:]
         tp_te=sc_t.inverse_transform(
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
+
+        # ── Test Seasonal: sliding window shift 1 periode ─────
+        # Model tetap dipakai, input dari trainval yg di-shift 1 periode
+        # → hasil bergerigi, no leakage
+        s_full_s=np.concatenate([season_train_s,season_val_s])
+        sp_te_s=[]
+        for i in range(n_test):
+            end  =min(len(s_full_s)-periode+i, len(s_full_s))  # clamp ke batas trainval
+            start=max(end-lookback, 0)
+            win  =s_full_s[start:end]
+            if len(win)<lookback:
+                win=np.pad(win,(lookback-len(win),0),mode='edge')
+            sp_te_s.append(win)
+        sp_te_s=np.array(sp_te_s,dtype=np.float32)
         sp_te=sc_s.inverse_transform(
-            recursive_forecast(SM,window_s,n_test).reshape(-1,1)).flatten()
+            predict_model(SM,sp_te_s).reshape(-1,1)).flatten()
+        window_s=s_full_s[-lookback:]
 
     h_tr=tp_tr+sp_tr; h_vl=tp_vl+sp_vl; h_te=tp_te+sp_te
 
