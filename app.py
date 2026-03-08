@@ -90,7 +90,7 @@ class CNNBiLSTM(nn.Module):
 
 def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=15):
     opt   = torch.optim.Adam(model.parameters(), lr=lr)
-    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=6, factor=0.5, verbose=False)
+    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=6, factor=0.5)
     crit  = nn.MSELoss()
     Xt=torch.tensor(Xtr,dtype=torch.float32); yt=torch.tensor(ytr,dtype=torch.float32)
     Xv=torch.tensor(Xvl,dtype=torch.float32); yv=torch.tensor(yvl,dtype=torch.float32)
