@@ -15,6 +15,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import io
 
+# Batasi jumlah thread PyTorch agar tidak berebut resource di CPU cloud
+import torch
+torch.set_num_threads(2)
+
 # ── page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="SST · CNN-BiLSTM + STL",
@@ -81,7 +85,6 @@ def narasi(txt):
 # ═════════════════════════════════════════════════════════════════════════════
 # PYTORCH MODEL dengan Batch Normalization (opsional)
 # ═════════════════════════════════════════════════════════════════════════════
-import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -271,27 +274,27 @@ with st.sidebar:
     stl_robust=st.checkbox("STL robust",value=True)
 
     st.markdown("### 🧠 Trend Model")
-    t_conv_f=st.slider("Conv1D filters", 16, 256, 64, 16)
+    t_conv_f=st.slider("Conv1D filters", 16, 128, 32, 16)        # default 32
     t_kern  =st.slider("Kernel size",    2,  15, 5, 1)
-    t_lstm  =st.slider("BiLSTM units",  32, 256, 128, 16)
+    t_lstm  =st.slider("BiLSTM units",  16, 128, 64, 16)         # default 64
     t_drop  =st.slider("Dropout",       0.0, 0.5, 0.2, 0.05)
-    t_dense =st.slider("Dense units",   16, 128, 64, 8)
+    t_dense =st.slider("Dense units",   16, 128, 32, 8)           # default 32
     t_lr    =st.number_input("LR trend",value=0.0007,format="%.4f")
 
     st.markdown("### 🧠 Seasonal Model")
-    s_conv_f=st.slider("Conv1D filters (S)", 16, 256, 128, 16)
+    s_conv_f=st.slider("Conv1D filters (S)", 16, 128, 64, 16)    # default 64
     s_kern  =st.slider("Kernel size (S)",    2,  15, 5, 1)
-    s_lstm  =st.slider("BiLSTM units (S)",  32, 256, 128, 16)
+    s_lstm  =st.slider("BiLSTM units (S)",  16, 128, 64, 16)     # default 64
     s_drop  =st.slider("Dropout Seasonal",   0.0, 0.5, 0.1, 0.05)
-    s_dense =st.slider("Dense units (S)",   16, 128, 32, 8)
+    s_dense =st.slider("Dense units (S)",   16, 64, 32, 8)        # default 32
     s_lr    =st.number_input("LR seasonal",value=0.0003,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",   30,365,180,10)
-    epochs    =st.slider("Max epochs", 10,500,300,10)
+    lookback  =st.slider("Lookback",   30, 180, 90, 10)           # default 90
+    epochs    =st.slider("Max epochs", 10, 200, 100, 10)          # default 100
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=2)
-    patience  =st.slider("Early stopping patience", 10, 50, 25, 5)
-    use_bn    =st.checkbox("Gunakan Batch Normalization", value=True)
+    patience  =st.slider("Early stopping patience", 10, 50, 20, 5)
+    use_bn    =st.checkbox("Gunakan Batch Normalization", value=False)  # default False
     seed      =st.number_input("Random seed",value=42)
 
     st.divider()
