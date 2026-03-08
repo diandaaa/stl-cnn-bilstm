@@ -60,68 +60,68 @@ torch.set_float32_matmul_precision("medium")   # faster matmul on CPU
 torch.set_num_threads(max(1, torch.get_num_threads()))  # use all available cores
 torch.backends.cudnn.benchmark = False  # CPU only
 
+import torch.nn.functional as F
+
 class TrendModel(nn.Module):
     """Conv1D(32,k=5,causal) → BiLSTM(64) → Dropout(0.2) → Dense(32) → Dense(1)"""
     def __init__(self, lb, cf=32, ks=5, lu=64, du=32, drop=0.2):
         super().__init__()
-        self.pad    = nn.ConstantPad1d((ks-1, 0), 0)
+        self.ks     = ks
         self.conv   = nn.Conv1d(1, cf, ks)
-        self.relu   = nn.ReLU()
         self.bilstm = nn.LSTM(cf, lu, batch_first=True, bidirectional=True)
         self.drop   = nn.Dropout(drop)
         self.fc1    = nn.Linear(lu*2, du)
         self.fc2    = nn.Linear(du, 1)
 
-    def forward(self, x):           # x: (B, L, 1)
-        x = x.permute(0,2,1)        # (B, 1, L)
-        x = self.relu(self.conv(self.pad(x)))  # (B, cf, L)
-        x = x.permute(0,2,1)        # (B, L, cf)
+    def forward(self, x):                          # x: (B, L, 1)
+        x = F.pad(x.permute(0,2,1),(self.ks-1,0)) # pad+permute in one step: (B,1,L+pad)
+        x = F.relu(self.conv(x)).permute(0,2,1)   # (B, L, cf)
         out, _ = self.bilstm(x)
-        x = self.drop(out[:,-1,:])  # last timestep
-        x = self.relu(self.fc1(x))
-        return self.fc2(x).squeeze(-1)
+        return self.fc2(F.relu(self.fc1(self.drop(out[:,-1,:])))).squeeze(-1)
 
 class SeasonModel(nn.Module):
     """Conv1D(64,k=5,causal) → BiLSTM(64) → Dense(16) → Dense(1)  [NO Dropout]"""
     def __init__(self, lb, cf=64, ks=5, lu=64, du=16):
         super().__init__()
-        self.pad    = nn.ConstantPad1d((ks-1, 0), 0)
+        self.ks     = ks
         self.conv   = nn.Conv1d(1, cf, ks)
-        self.relu   = nn.ReLU()
         self.bilstm = nn.LSTM(cf, lu, batch_first=True, bidirectional=True)
         self.fc1    = nn.Linear(lu*2, du)
         self.fc2    = nn.Linear(du, 1)
 
     def forward(self, x):
-        x = x.permute(0,2,1)
-        x = self.relu(self.conv(self.pad(x)))
-        x = x.permute(0,2,1)
+        x = F.pad(x.permute(0,2,1),(self.ks-1,0))
+        x = F.relu(self.conv(x)).permute(0,2,1)
         out, _ = self.bilstm(x)
-        x = self.relu(self.fc1(out[:,-1,:]))
-        return self.fc2(x).squeeze(-1)
+        return self.fc2(F.relu(self.fc1(out[:,-1,:]))).squeeze(-1)
 
 def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
+    import copy
     opt   = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=8, factor=0.5)
     crit  = nn.MSELoss()
-    # Pre-add feature dim once — tidak perlu unsqueeze setiap batch
     Xt=torch.tensor(Xtr,dtype=torch.float32).unsqueeze(-1)
     yt=torch.tensor(ytr,dtype=torch.float32)
     Xv=torch.tensor(Xvl,dtype=torch.float32).unsqueeze(-1)
     yv=torch.tensor(yvl,dtype=torch.float32)
-    loader=DataLoader(TensorDataset(Xt,yt), batch_size=bs, shuffle=False,
-                      num_workers=0, pin_memory=False)
+    loader=DataLoader(TensorDataset(Xt,yt), batch_size=bs, shuffle=False, num_workers=0)
     best_val,best_w,wait=float("inf"),None,0; h_tr,h_vl=[],[]
+    n_batches=len(loader)
     for _ in range(epochs):
-        model.train(); ep=[]
+        model.train(); running=0.0
         for xb,yb in loader:
             opt.zero_grad(set_to_none=True)
-            l=crit(model(xb),yb); l.backward(); opt.step(); ep.append(l.item())
-        tl=float(np.mean(ep)); model.eval()
-        with torch.no_grad(): vl=crit(model(Xv),yv).item()
+            l=crit(model(xb),yb); l.backward(); opt.step()
+            running+=l.item()
+        tl=running/n_batches
+        model.eval()
+        with torch.inference_mode():  # lebih cepat dari no_grad
+            vl=crit(model(Xv),yv).item()
         h_tr.append(tl); h_vl.append(vl); sched.step(vl)
         if vl<best_val-1e-7:
-            best_val=vl; best_w={k:v.clone() for k,v in model.state_dict().items()}; wait=0
+            best_val=vl
+            best_w=copy.deepcopy(model.state_dict())  # deepcopy lebih bersih
+            wait=0
         else:
             wait+=1
             if wait>=patience: break
@@ -131,21 +131,23 @@ def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
 def predict_model(model, X):
     """Batch predict — teacher forcing (dipakai untuk train & val)."""
     model.eval()
-    with torch.no_grad():
-        t=torch.tensor(X, dtype=torch.float32)
-        return model(t.unsqueeze(-1)).numpy().flatten()
+    with torch.inference_mode():
+        t=torch.tensor(X, dtype=torch.float32).unsqueeze(-1)
+        return model(t).numpy().flatten()
 
 def recursive_forecast(model, window, steps):
     """Recursive murni persis Colab: w = np.append(w[1:], p)"""
     model.eval()
     w = window.copy().astype(np.float32)
     out = []
-    with torch.no_grad():
+    # pre-alloc tensor shape agar tidak re-alloc setiap step
+    x_buf = torch.zeros(1, len(w), 1, dtype=torch.float32)
+    with torch.inference_mode():
         for _ in range(steps):
-            x = torch.tensor(w, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-            p = model(x).item()
+            x_buf[0,:,0] = torch.from_numpy(w)
+            p = model(x_buf).item()
             out.append(p)
-            w = np.append(w[1:], p)  # geser window persis seperti Colab
+            w = np.append(w[1:], p)
     return np.array(out, dtype=np.float32)
 
 def build_dataset(arr, lb):
