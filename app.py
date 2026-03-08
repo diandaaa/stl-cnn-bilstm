@@ -431,40 +431,46 @@ with t2:
     if mode == "⬆️ Upload Model (.pt) dari Colab":
         st.info("""
 **Cara pakai:**
-1. Di Colab, setelah training selesai tambahkan:
-```python
-import torch
-torch.save(trend_model.state_dict(), 'trend_model.pt')
-torch.save(season_model.state_dict(), 'season_model.pt')
-```
-2. Download kedua file dari Colab
-3. Upload di sini → langsung predict tanpa training ulang
+1. Jalankan `train_colab_pytorch.py` di Colab → download `trend_model.pt` & `season_model.pt`
+2. Upload kedua file di bawah → langsung predict tanpa training ulang
         """)
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### 🔵 Trend Model (.pt)")
             up_t = st.file_uploader("Upload trend_model.pt", type=["pt"], key="up_trend")
+            # simpan bytes ke session_state supaya tidak hilang saat rerun
+            if up_t is not None:
+                st.session_state["bytes_trend"] = up_t.read()
+            if "bytes_trend" in st.session_state:
+                st.success("✅ trend_model.pt tersimpan")
         with col2:
             st.markdown("#### 🟠 Seasonal Model (.pt)")
             up_s = st.file_uploader("Upload season_model.pt", type=["pt"], key="up_season")
+            if up_s is not None:
+                st.session_state["bytes_season"] = up_s.read()
+            if "bytes_season" in st.session_state:
+                st.success("✅ season_model.pt tersimpan")
 
-        if up_t and up_s:
-            import io
-            try:
-                TM = TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
-                SM = SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
-                TM.load_state_dict(torch.load(io.BytesIO(up_t.read()), map_location="cpu"))
-                SM.load_state_dict(torch.load(io.BytesIO(up_s.read()), map_location="cpu"))
-                TM.eval(); SM.eval()
-                st.success("✅ Model berhasil dimuat! Langsung ke tab 🎯 Forecast Results.")
-                st.session_state.update(dict(
-                    trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
-                    trend_train_s=trend_train_s, trend_val_s=trend_val_s,
-                    season_train_s=season_train_s, season_val_s=season_val_s,
-                ))
-            except Exception as e:
-                st.error(f"❌ Gagal load model: {e}")
-                st.warning("Pastikan parameter model (lookback, filters, units) sama dengan saat training di Colab.")
+        if "bytes_trend" in st.session_state and "bytes_season" in st.session_state:
+            if st.button("🚀 Load Model & Lanjut ke Forecast", type="primary"):
+                import io
+                try:
+                    TM = TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
+                    SM = SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
+                    TM.load_state_dict(torch.load(
+                        io.BytesIO(st.session_state["bytes_trend"]), map_location="cpu"))
+                    SM.load_state_dict(torch.load(
+                        io.BytesIO(st.session_state["bytes_season"]), map_location="cpu"))
+                    TM.eval(); SM.eval()
+                    st.session_state.update(dict(
+                        trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
+                        trend_train_s=trend_train_s, trend_val_s=trend_val_s,
+                        season_train_s=season_train_s, season_val_s=season_val_s,
+                    ))
+                    st.success("✅ Model berhasil dimuat! Langsung ke tab 🎯 Forecast Results.")
+                except Exception as e:
+                    st.error(f"❌ Gagal load model: {e}")
+                    st.warning("Pastikan parameter model (lookback, filters, units) sama dengan saat training di Colab.")
         else:
             st.warning("Upload kedua file .pt untuk melanjutkan.")
 
