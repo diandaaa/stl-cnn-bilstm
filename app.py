@@ -331,7 +331,7 @@ with st.sidebar:
     patience = st.slider("Early stopping patience", 10, 50, 20, 5)
     use_bn = st.checkbox("Gunakan Batch Normalization", value=False)
     scaler_type = st.selectbox("Scaler", ["MinMax", "Standard"], index=0)
-    weight_decay = st.number_input("Weight decay", value=1e-5, format="e", step=1e-5)
+    weight_decay = st.number_input("Weight decay", value=1e-5, format="%.6f", step=1e-5)
     seed = st.number_input("Random seed", value=42)
 
     st.divider()
