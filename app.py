@@ -101,25 +101,24 @@ class SeasonModel(nn.Module):
         return self.fc2(x).squeeze(-1)
 
 def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
-    # compile model untuk CPU — ~20-40% lebih cepat di PyTorch 2.x
-    try:
-        model = torch.compile(model, mode="reduce-overhead")
-    except Exception:
-        pass  # fallback jika torch.compile tidak tersedia
     opt   = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=8, factor=0.5)
     crit  = nn.MSELoss()
-    Xt=torch.tensor(Xtr,dtype=torch.float32); yt=torch.tensor(ytr,dtype=torch.float32)
-    Xv=torch.tensor(Xvl,dtype=torch.float32); yv=torch.tensor(yvl,dtype=torch.float32)
-    loader=DataLoader(TensorDataset(Xt,yt), batch_size=bs, shuffle=False, num_workers=0)
+    # Pre-add feature dim once — tidak perlu unsqueeze setiap batch
+    Xt=torch.tensor(Xtr,dtype=torch.float32).unsqueeze(-1)
+    yt=torch.tensor(ytr,dtype=torch.float32)
+    Xv=torch.tensor(Xvl,dtype=torch.float32).unsqueeze(-1)
+    yv=torch.tensor(yvl,dtype=torch.float32)
+    loader=DataLoader(TensorDataset(Xt,yt), batch_size=bs, shuffle=False,
+                      num_workers=0, pin_memory=False)
     best_val,best_w,wait=float("inf"),None,0; h_tr,h_vl=[],[]
     for _ in range(epochs):
         model.train(); ep=[]
         for xb,yb in loader:
             opt.zero_grad(set_to_none=True)
-            l=crit(model(xb.unsqueeze(-1)),yb); l.backward(); opt.step(); ep.append(l.item())
+            l=crit(model(xb),yb); l.backward(); opt.step(); ep.append(l.item())
         tl=float(np.mean(ep)); model.eval()
-        with torch.no_grad(): vl=crit(model(Xv.unsqueeze(-1)),yv).item()
+        with torch.no_grad(): vl=crit(model(Xv),yv).item()
         h_tr.append(tl); h_vl.append(vl); sched.step(vl)
         if vl<best_val-1e-7:
             best_val=vl; best_w={k:v.clone() for k,v in model.state_dict().items()}; wait=0
@@ -137,12 +136,16 @@ def predict_model(model, X):
         return model(t.unsqueeze(-1)).numpy().flatten()
 
 def recursive_forecast(model, window, steps):
-    """Recursive murni — dipakai untuk test & future (no leakage)."""
-    model.eval(); w=list(window.copy()); out=[]; lb=len(window)
+    """Recursive murni persis Colab: w = np.append(w[1:], p)"""
+    model.eval()
+    w = window.copy().astype(np.float32)
+    out = []
     with torch.no_grad():
         for _ in range(steps):
-            x=torch.tensor(w[-lb:],dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
-            p=model(x).item(); out.append(p); w.append(p)
+            x = torch.tensor(w, dtype=torch.float32).unsqueeze(0).unsqueeze(-1)
+            p = model(x).item()
+            out.append(p)
+            w = np.append(w[1:], p)  # geser window persis seperti Colab
     return np.array(out, dtype=np.float32)
 
 def build_dataset(arr, lb):
@@ -156,11 +159,11 @@ def mape_fn(yt,yp):
 def mae_fn(yt,yp): return np.mean(np.abs(np.array(yt)-np.array(yp)))
 
 def fungsi_spektral(x):
+    # Vectorized via FFT — hasil identik, ribuan kali lebih cepat dari loop manual
     x=np.asarray(x,dtype=float); n=len(x); k=round((n-1)/2)
-    t=np.arange(1,n+1); pg=np.zeros(k)
-    for i in range(1,k+1):
-        w=(2*np.pi*i)/n; a=(2/n)*np.sum(x*np.cos(w*t)); b=(2/n)*np.sum(x*np.sin(w*t))
-        pg[i-1]=a**2+b**2
+    fft=np.fft.rfft(x); j=np.arange(1,k+1)
+    a=(2/n)*fft[j].real; b=-(2/n)*fft[j].imag
+    pg=a**2+b**2
     km=np.argmax(pg)+1; per=int(round((2*np.pi)/((2*np.pi*km)/n)))
     Th=np.max(pg)/np.sum(pg); Tt=0.13135
     return per,Th,Tt,Th>Tt,pg
