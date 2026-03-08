@@ -650,22 +650,46 @@ with t4:
 
 # ══════ TAB 5: FUTURE FORECAST ════════════════════════════════
 with t5:
-    if "window_t" not in st.session_state:
-        st.info("Jalankan forecast terlebih dahulu di tab 🎯."); st.stop()
+    if "trained" not in st.session_state:
+        st.info("Muat model terlebih dahulu di tab 🤖."); st.stop()
     TM=st.session_state["TM"]; SM=st.session_state["SM"]
     sc_t=st.session_state["sc_t"]; sc_s=st.session_state["sc_s"]
-    window_t=st.session_state["window_t"]; window_s=st.session_state["window_s"]
 
     STEPS=10
     freq_g=pd.infer_freq(dates[:50]) or "D"
     fut_dates=pd.date_range(dates[-1],periods=STEPS+1,freq=freq_g)[1:]
 
-    with st.spinner("Future forecast (recursive)…"):
-        tf_s=recursive_forecast(TM,window_t,STEPS)
-        sf_s=recursive_forecast(SM,window_s,STEPS)
-    tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
-    sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
-    hf=tf+sf
+    with st.spinner("Future forecast dari full data…"):
+        # ── STL pada FULL DATA (termasuk test) ────────────────
+        # Untuk future forecast ini valid — semua data sudah diketahui,
+        # kita mau window terbaik untuk prediksi ke depan
+        from statsmodels.tsa.seasonal import STL as _STL
+        stl_full=_STL(y_full, period=periode, robust=stl_robust).fit()
+        trend_full_fc =stl_full.trend
+        season_full_fc=stl_full.seasonal
+
+        # Scale ulang pakai scaler yang sama (fit pada train saja)
+        tf_full_s=sc_t.transform(trend_full_fc.reshape(-1,1)).flatten().astype(np.float32)
+        sf_full_s=sc_s.transform(season_full_fc.reshape(-1,1)).flatten().astype(np.float32)
+
+        # Trend: recursive dari window terakhir full data
+        window_t_fc=tf_full_s[-lookback:]
+        tf_s=recursive_forecast(TM, window_t_fc, STEPS)
+        tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
+
+        # Seasonal: sliding window shift 1 periode dari full data
+        sf_fc_list=[]
+        for i in range(STEPS):
+            end  =min(len(sf_full_s)-periode+i, len(sf_full_s))
+            start=max(end-lookback, 0)
+            win  =sf_full_s[start:end]
+            if len(win)<lookback:
+                win=np.pad(win,(lookback-len(win),0),mode='edge')
+            sf_fc_list.append(win)
+        sf_s=predict_model(SM, np.array(sf_fc_list,dtype=np.float32))
+        sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
+
+        hf=tf+sf
 
     sec("🔮 Forecast 10 Periode ke Depan")
     tail=min(90,n); fig,ax=plt.subplots(figsize=(14,4))
@@ -698,4 +722,4 @@ with t5:
     st.download_button("⬇ Download Future CSV",
         df_out.to_csv(index=False).encode(),"future_forecast.csv","text/csv")
     narasi(f"Proyeksi SST: **{hf.min():.4f}–{hf.max():.4f}°C**. "
-           "Forecast memakai window terakhir trainval — tidak ada data test yang digunakan.")
+           f"STL di-fit pada full data ({n} baris) untuk window terbaik ke depan.")
