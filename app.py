@@ -487,10 +487,21 @@ with t2:
             ht_tr,ht_val=train_model(TM,Xtt,ytt,Xvt,yvt,epochs,batch_size,t_lr, patience=20)
             prog.progress(100,text=f"Done · {len(ht_tr)} epochs")
             fig,ax=plt.subplots(figsize=(6,3))
-            ax.plot(ht_tr,color=PAL["train"],lw=1.4,label="Train")
-            ax.plot(ht_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
-            ax.set_title("Trend – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
+            ax.plot(ht_tr,color=PAL["train"],lw=1.4,label="Train Loss")
+            ax.plot(ht_val,color=PAL["val"],lw=1.4,ls="--",label="Val Loss")
+            best_t=int(np.argmin(ht_val))
+            ax.axvline(best_t,color="#64748b",lw=1,ls=":",alpha=.7)
+            ax.annotate("best="+f"{ht_val[best_t]:.6f}"+"\n@ep "+str(best_t+1),
+                        xy=(best_t,ht_val[best_t]),
+                        xytext=(best_t+max(len(ht_val)//8,2),ht_val[best_t]),
+                        fontsize=7,color="#94a3b8",
+                        arrowprops=dict(arrowstyle="->",color="#64748b",lw=.7))
+            ax.set_title("Trend – Loss Curve"); ax.set_xlabel("Epoch")
+            ax.legend(); ax.grid(True,lw=.4)
             st.pyplot(fig,use_container_width=True); plt.close(fig)
+            c1,c2=st.columns(2)
+            mcard(c1,"Best Val Loss",f"{min(ht_val):.6f}",f"epoch {best_t+1}")
+            mcard(c2,"Final Train Loss",f"{ht_tr[-1]:.6f}",f"{len(ht_tr)} epochs")
         with col2:
             st.markdown("#### 🟠 Seasonal Model")
             st.caption(f"Conv1D({s_conv_f},k={s_kern},causal) → BiLSTM({s_lstm}) → Dense({s_dense}) → Dense(1)  [no dropout]")
@@ -499,10 +510,21 @@ with t2:
             hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr, patience=20)
             prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
             fig,ax=plt.subplots(figsize=(6,3))
-            ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train")
-            ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
-            ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
+            ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train Loss")
+            ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val Loss")
+            best_s=int(np.argmin(hs_val))
+            ax.axvline(best_s,color="#64748b",lw=1,ls=":",alpha=.7)
+            ax.annotate("best="+f"{hs_val[best_s]:.6f}"+"\n@ep "+str(best_s+1),
+                        xy=(best_s,hs_val[best_s]),
+                        xytext=(best_s+max(len(hs_val)//8,2),hs_val[best_s]),
+                        fontsize=7,color="#94a3b8",
+                        arrowprops=dict(arrowstyle="->",color="#64748b",lw=.7))
+            ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch")
+            ax.legend(); ax.grid(True,lw=.4)
             st.pyplot(fig,use_container_width=True); plt.close(fig)
+            c1,c2=st.columns(2)
+            mcard(c1,"Best Val Loss",f"{min(hs_val):.6f}",f"epoch {best_s+1}")
+            mcard(c2,"Final Train Loss",f"{hs_tr[-1]:.6f}",f"{len(hs_tr)} epochs")
 
         st.session_state.update(dict(
             trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
@@ -529,25 +551,23 @@ with t3:
         sp_vl=sc_s.inverse_transform(predict_model(SM,Xvs).reshape(-1,1)).flatten()
 
         # ── Test Trend: recursive dari window terakhir trainval ──
-        window_t=np.concatenate([trend_train_s, trend_val_s])[-lookback:]
+        t_full_s=np.concatenate([trend_train_s, trend_val_s])
+        window_t=t_full_s[-lookback:]
         tp_te=sc_t.inverse_transform(
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
         # ── Test Seasonal: sliding window shift 1 periode ─────
-        # Model tetap dipakai, input dari trainval yg di-shift 1 periode
-        # → hasil bergerigi, no leakage
         s_full_s=np.concatenate([season_train_s,season_val_s])
         sp_te_s=[]
         for i in range(n_test):
-            end  =min(len(s_full_s)-periode+i, len(s_full_s))  # clamp ke batas trainval
-            start=max(end-lookback, 0)
-            win  =s_full_s[start:end]
-            if len(win)<lookback:
-                win=np.pad(win,(lookback-len(win),0),mode='edge')
-            sp_te_s.append(win)
-        sp_te_s=np.array(sp_te_s,dtype=np.float32)
+            end_s  =min(len(s_full_s)-periode+i, len(s_full_s))
+            start_s=max(end_s-lookback, 0)
+            win_s  =s_full_s[start_s:end_s]
+            if len(win_s)<lookback:
+                win_s=np.pad(win_s,(lookback-len(win_s),0),mode='edge')
+            sp_te_s.append(win_s)
         sp_te=sc_s.inverse_transform(
-            predict_model(SM,sp_te_s).reshape(-1,1)).flatten()
+            predict_model(SM,np.array(sp_te_s,dtype=np.float32)).reshape(-1,1)).flatten()
         window_s=s_full_s[-lookback:]
 
     h_tr=tp_tr+sp_tr; h_vl=tp_vl+sp_vl; h_te=tp_te+sp_te
