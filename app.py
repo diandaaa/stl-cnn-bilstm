@@ -533,7 +533,7 @@ with t2:
     with col2:
         st.markdown("#### 🟠 Seasonal Model")
         prog2=st.progress(0,text="Training…")
-        SM=CNNBiLSTM(lookback,s_conv_f,s_kern,s_lstm,s_dense,dropout=0.0)
+        SM=CNNBiLSTM(lookback,s_conv_f,s_kern,s_lstm,s_dense,0.0)
         hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr)
         prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
         fig,ax=plt.subplots(figsize=(6,3))
