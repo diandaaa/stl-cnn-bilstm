@@ -557,12 +557,14 @@ with t3:
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
         # ── Test Seasonal: sliding window shift 1 periode ─────
+        # Tile 1 periode ekstra supaya window tidak stuck di akhir
         s_full_s=np.concatenate([season_train_s,season_val_s])
+        s_tiled =np.concatenate([s_full_s, s_full_s[-periode:]])  # tambah 1 periode di akhir
         sp_te_s=[]
         for i in range(n_test):
-            end_s  =min(len(s_full_s)-periode+i, len(s_full_s))
+            end_s  =min(len(s_full_s)-periode+i, len(s_tiled))
             start_s=max(end_s-lookback, 0)
-            win_s  =s_full_s[start_s:end_s]
+            win_s  =s_tiled[start_s:end_s]
             if len(win_s)<lookback:
                 win_s=np.pad(win_s,(lookback-len(win_s),0),mode='edge')
             sp_te_s.append(win_s)
