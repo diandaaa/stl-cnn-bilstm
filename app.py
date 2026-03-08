@@ -160,6 +160,40 @@ def mape_fn(yt,yp):
     return np.mean(np.abs((yt[m]-yp[m])/yt[m]))*100
 def mae_fn(yt,yp): return np.mean(np.abs(np.array(yt)-np.array(yp)))
 
+def _plot_loss(ax, tr, vl, title, color):
+    """Plot loss curve dengan smoothing + ylim yang benar."""
+    tr_arr, vl_arr = np.array(tr), np.array(vl)
+    ep = np.arange(1, len(tr_arr)+1)
+    w  = max(5, len(tr_arr)//20)
+    # raw (transparan) + smoothed (solid)
+    ax.plot(ep, tr_arr, color=color,   lw=0.7, alpha=0.2)
+    ax.plot(ep, vl_arr, color=PAL["val"], lw=0.7, alpha=0.2)
+    if len(tr_arr) >= w:
+        ax.plot(ep[w-1:], np.convolve(tr_arr,np.ones(w)/w,'valid'),
+                color=color,      lw=2.0, label="Train Loss")
+        ax.plot(ep[w-1:], np.convolve(vl_arr,np.ones(w)/w,'valid'),
+                color=PAL["val"], lw=2.0, ls="--", label="Val Loss")
+    else:
+        ax.plot(ep, tr_arr, color=color,      lw=2.0, label="Train Loss")
+        ax.plot(ep, vl_arr, color=PAL["val"], lw=2.0, ls="--", label="Val Loss")
+    best = int(np.argmin(vl_arr))
+    ax.axvline(best+1, color="#64748b", lw=1.2, ls=":", alpha=.8)
+    ax.scatter([best+1], [vl_arr[best]], color="gold", s=50, zorder=5)
+    ax.annotate(f"best={vl_arr[best]:.5f}\n@ep {best+1}",
+                xy=(best+1, vl_arr[best]),
+                xytext=(best+1+max(len(vl_arr)//10,3), vl_arr[best]),
+                fontsize=7, color="#94a3b8",
+                arrowprops=dict(arrowstyle="->", color="#64748b", lw=0.7))
+    # clip spike awal dari y-axis
+    clip = min(5, len(tr_arr)//10)
+    vals = np.concatenate([tr_arr[clip:], vl_arr[clip:]])
+    ymin, ymax = np.nanmin(vals), np.nanmax(vals)
+    pad = (ymax-ymin)*0.15
+    ax.set_ylim(max(0,ymin-pad), ymax+pad)
+    ax.set_title(title); ax.set_xlabel("Epoch"); ax.set_ylabel("MSE Loss")
+    ax.legend(loc="upper right"); ax.grid(True, lw=.4)
+
+
 def fungsi_spektral(x):
     # Vectorized via FFT — hasil identik, ribuan kali lebih cepat dari loop manual
     x=np.asarray(x,dtype=float); n=len(x); k=round((n-1)/2)
@@ -487,18 +521,9 @@ with t2:
             ht_tr,ht_val=train_model(TM,Xtt,ytt,Xvt,yvt,epochs,batch_size,t_lr, patience=20)
             prog.progress(100,text=f"Done · {len(ht_tr)} epochs")
             fig,ax=plt.subplots(figsize=(6,3))
-            ax.plot(ht_tr,color=PAL["train"],lw=1.4,label="Train Loss")
-            ax.plot(ht_val,color=PAL["val"],lw=1.4,ls="--",label="Val Loss")
-            best_t=int(np.argmin(ht_val))
-            ax.axvline(best_t,color="#64748b",lw=1,ls=":",alpha=.7)
-            ax.annotate("best="+f"{ht_val[best_t]:.6f}"+"\n@ep "+str(best_t+1),
-                        xy=(best_t,ht_val[best_t]),
-                        xytext=(best_t+max(len(ht_val)//8,2),ht_val[best_t]),
-                        fontsize=7,color="#94a3b8",
-                        arrowprops=dict(arrowstyle="->",color="#64748b",lw=.7))
-            ax.set_title("Trend – Loss Curve"); ax.set_xlabel("Epoch")
-            ax.legend(); ax.grid(True,lw=.4)
+            _plot_loss(ax,ht_tr,ht_val,"Trend – Loss Curve",PAL["train"])
             st.pyplot(fig,use_container_width=True); plt.close(fig)
+            best_t=int(np.argmin(ht_val))
             c1,c2=st.columns(2)
             mcard(c1,"Best Val Loss",f"{min(ht_val):.6f}",f"epoch {best_t+1}")
             mcard(c2,"Final Train Loss",f"{ht_tr[-1]:.6f}",f"{len(ht_tr)} epochs")
@@ -510,18 +535,9 @@ with t2:
             hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr, patience=20)
             prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
             fig,ax=plt.subplots(figsize=(6,3))
-            ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train Loss")
-            ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val Loss")
-            best_s=int(np.argmin(hs_val))
-            ax.axvline(best_s,color="#64748b",lw=1,ls=":",alpha=.7)
-            ax.annotate("best="+f"{hs_val[best_s]:.6f}"+"\n@ep "+str(best_s+1),
-                        xy=(best_s,hs_val[best_s]),
-                        xytext=(best_s+max(len(hs_val)//8,2),hs_val[best_s]),
-                        fontsize=7,color="#94a3b8",
-                        arrowprops=dict(arrowstyle="->",color="#64748b",lw=.7))
-            ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch")
-            ax.legend(); ax.grid(True,lw=.4)
+            _plot_loss(ax,hs_tr,hs_val,"Seasonal – Loss Curve",PAL["season"])
             st.pyplot(fig,use_container_width=True); plt.close(fig)
+            best_s=int(np.argmin(hs_val))
             c1,c2=st.columns(2)
             mcard(c1,"Best Val Loss",f"{min(hs_val):.6f}",f"epoch {best_s+1}")
             mcard(c2,"Final Train Loss",f"{hs_tr[-1]:.6f}",f"{len(hs_tr)} epochs")
@@ -556,10 +572,9 @@ with t3:
         tp_te=sc_t.inverse_transform(
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
-        # ── Test Seasonal: sliding window shift 1 periode ─────
-        # Tile 1 periode ekstra supaya window tidak stuck di akhir
+        # ── Test Seasonal: sliding window shift 1 periode + tile ─
         s_full_s=np.concatenate([season_train_s,season_val_s])
-        s_tiled =np.concatenate([s_full_s, s_full_s[-periode:]])  # tambah 1 periode di akhir
+        s_tiled =np.concatenate([s_full_s, s_full_s[-periode:]])
         sp_te_s=[]
         for i in range(n_test):
             end_s  =min(len(s_full_s)-periode+i, len(s_tiled))
