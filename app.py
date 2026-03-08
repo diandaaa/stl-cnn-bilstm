@@ -79,7 +79,7 @@ def narasi(txt):
     st.markdown(f'<div class="narasi">💡 {txt}</div>', unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PYTORCH MODEL (dengan fleksibilitas untuk tren dan seasonal)
+# PYTORCH MODEL dengan Batch Normalization (opsional)
 # ═════════════════════════════════════════════════════════════════════════════
 import torch
 import torch.nn as nn
@@ -87,29 +87,36 @@ from torch.utils.data import DataLoader, TensorDataset
 
 class CNNBiLSTM(nn.Module):
     def __init__(self, lookback, conv_filters, kernel_size,
-                 lstm_units, dense_units, dropout=0.0):
+                 lstm_units, dense_units, dropout=0.0, use_bn=False):
         super().__init__()
+        self.use_bn = use_bn
         self.pad    = nn.ConstantPad1d((kernel_size-1, 0), 0)
         self.conv   = nn.Conv1d(1, conv_filters, kernel_size)
+        self.bn_conv = nn.BatchNorm1d(conv_filters) if use_bn else nn.Identity()
         self.relu   = nn.ReLU()
         self.bilstm = nn.LSTM(conv_filters, lstm_units,
                               batch_first=True, bidirectional=True)
-        self.drop   = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.drop   = nn.Dropout(dropout)
         self.fc1    = nn.Linear(lstm_units*2, dense_units)
+        self.bn_fc  = nn.BatchNorm1d(dense_units) if use_bn else nn.Identity()
         self.fc2    = nn.Linear(dense_units, 1)
 
     def forward(self, x):
-        x = x.permute(0,2,1)
-        x = self.relu(self.conv(self.pad(x)))
-        x = x.permute(0,2,1)
+        x = x.permute(0,2,1)               # (B,1,L)
+        x = self.pad(x)
+        x = self.conv(x)
+        x = self.bn_conv(x)
+        x = self.relu(x)
+        x = x.permute(0,2,1)               # (B,L,conv_filters)
         out,_ = self.bilstm(x)
-        x = self.drop(out[:,-1,:])
+        x = self.drop(out[:,-1,:])          # last timestep
         x = self.relu(self.fc1(x))
+        x = self.bn_fc(x)
         return self.fc2(x).squeeze(-1)
 
 
 def train_model(model, X_tr, y_tr, X_val, y_val,
-                epochs, batch_size, lr, patience=20):
+                epochs, batch_size, lr, patience=20, use_bn=False):
     opt    = torch.optim.Adam(model.parameters(), lr=lr)
     sched  = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=8, factor=0.5)
     loss_fn= nn.MSELoss()
@@ -227,7 +234,7 @@ def tight_ylim(ax, data_list, pad=0.15):
     ax.set_ylim(lo-r, hi+r)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SIDEBAR (dengan penyesuaian parameter untuk meningkatkan performa)
+# SIDEBAR
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🌊 SST Forecast")
@@ -264,28 +271,27 @@ with st.sidebar:
     stl_robust=st.checkbox("STL robust",value=True)
 
     st.markdown("### 🧠 Trend Model")
-    t_conv_f=st.slider("Conv1D filters", 16, 256, 32, 16)   # diperbesar rentangnya
+    t_conv_f=st.slider("Conv1D filters", 16, 256, 64, 16)
     t_kern  =st.slider("Kernel size",    2,  15, 5, 1)
-    t_lstm  =st.slider("BiLSTM units",  16, 256, 64, 16)
-    t_drop  =st.slider("Dropout",       0.0,0.5,0.2,0.05)
-    t_dense =st.slider("Dense units",   16, 128, 32, 8)     # minimal 16
+    t_lstm  =st.slider("BiLSTM units",  32, 256, 128, 16)
+    t_drop  =st.slider("Dropout",       0.0, 0.5, 0.2, 0.05)
+    t_dense =st.slider("Dense units",   16, 128, 64, 8)
     t_lr    =st.number_input("LR trend",value=0.0007,format="%.4f")
 
     st.markdown("### 🧠 Seasonal Model")
-    s_conv_f=st.slider("Conv1D filters (S)", 16, 256, 64, 16) # perbesar
+    s_conv_f=st.slider("Conv1D filters (S)", 16, 256, 128, 16)
     s_kern  =st.slider("Kernel size (S)",    2,  15, 5, 1)
-    s_lstm  =st.slider("BiLSTM units (S)",  16, 256, 64, 16)
-    # Seasonal model di Colab tanpa dropout, tapi kita kasih opsi 0.0 default
-    s_drop  =st.slider("Dropout Seasonal (S)",0.0,0.5,0.0,0.05)
-    s_dense =st.slider("Dense units (S)",   8,  128, 32, 8)   # naikkan jadi 32 (Colab 16, tapi kita kasih lebih)
-    s_lr    =st.number_input("LR seasonal",value=0.0005,format="%.4f")
+    s_lstm  =st.slider("BiLSTM units (S)",  32, 256, 128, 16)
+    s_drop  =st.slider("Dropout Seasonal",   0.0, 0.5, 0.1, 0.05)
+    s_dense =st.slider("Dense units (S)",   16, 128, 32, 8)
+    s_lr    =st.number_input("LR seasonal",value=0.0003,format="%.4f")
 
     st.markdown("### ⚙️ Training")
     lookback  =st.slider("Lookback",   30,365,180,10)
-    epochs    =st.slider("Max epochs", 10,500,250,10)
+    epochs    =st.slider("Max epochs", 10,500,300,10)
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=2)
-    # Tambahkan patience untuk early stopping
-    patience  =st.slider("Early stopping patience", 10, 50, 25, 5)  # lebih besar dari default 20
+    patience  =st.slider("Early stopping patience", 10, 50, 25, 5)
+    use_bn    =st.checkbox("Gunakan Batch Normalization", value=True)
     seed      =st.number_input("Random seed",value=42)
 
     st.divider()
@@ -479,6 +485,7 @@ with t1:
     mcard(c1,"GPH d estimate",f"{d_gph:.4f}")
     mcard(c2,"Memory Class",  mc,ms)
 
+    # interpretasi naratif trend
     trend_slope=(trend_tv[-1]-trend_tv[0])/len(trend_tv)
     arah="meningkat" if trend_slope>0 else "menurun"
     trend_range=trend_tv.max()-trend_tv.min()
@@ -555,9 +562,8 @@ with t2:
     with col1:
         st.markdown("#### 🔵 Trend Model")
         prog=st.progress(0,text="Training…")
-        TM=CNNBiLSTM(lookback, t_conv_f, t_kern, t_lstm, t_dense, dropout=t_drop)
-        ht_tr,ht_val=train_model(TM, Xtt, ytt, Xvt, yvt,
-                                 epochs, batch_size, t_lr, patience=patience)
+        TM=CNNBiLSTM(lookback,t_conv_f,t_kern,t_lstm,t_dense,t_drop,use_bn=use_bn)
+        ht_tr,ht_val=train_model(TM,Xtt,ytt,Xvt,yvt,epochs,batch_size,t_lr,patience=patience,use_bn=use_bn)
         prog.progress(100,text=f"Done · {len(ht_tr)} epochs")
         fig,ax=plt.subplots(figsize=(6,3))
         ax.plot(ht_tr, color=PAL["train"],lw=1.5,label="Train Loss")
@@ -570,9 +576,8 @@ with t2:
     with col2:
         st.markdown("#### 🟠 Seasonal Model")
         prog2=st.progress(0,text="Training…")
-        SM=CNNBiLSTM(lookback, s_conv_f, s_kern, s_lstm, s_dense, dropout=s_drop)
-        hs_tr,hs_val=train_model(SM, Xts, yts, Xvs, yvs,
-                                 epochs, batch_size, s_lr, patience=patience)
+        SM=CNNBiLSTM(lookback,s_conv_f,s_kern,s_lstm,s_dense,s_drop,use_bn=use_bn)
+        hs_tr,hs_val=train_model(SM,Xts,yts,Xvs,yvs,epochs,batch_size,s_lr,patience=patience,use_bn=use_bn)
         prog2.progress(100,text=f"Done · {len(hs_tr)} epochs")
         fig,ax=plt.subplots(figsize=(6,3))
         ax.plot(hs_tr, color=PAL["season"],lw=1.5,label="Train Loss")
@@ -610,6 +615,16 @@ with t3:
         sp_te=sc_s.inverse_transform(recursive_forecast(SM,sl,n_test).reshape(-1,1)).flatten()
 
     h_tr=tp_tr+sp_tr; h_vl=tp_vl+sp_vl; h_te=tp_te+sp_te
+
+    # Diagnostic: Plot prediksi seasonal pada validation set
+    sec("📊 Diagnostic: Seasonal Validation")
+    fig,ax=plt.subplots(figsize=(14,3.5))
+    ax.plot(dates[n_train:n_train+n_val], season_tv[n_train:n_train+n_val], color=PAL["actual"], lw=1.5, label="Actual Seasonal Val")
+    ax.plot(dates[n_train:n_train+n_val], sp_vl, color=PAL["val"], lw=1.5, ls="--", label="Predicted Seasonal Val")
+    ax.set_title("Seasonal Component – Validation Set",color="#e2e8f0")
+    tight_ylim(ax,[season_tv[n_train:n_train+n_val], sp_vl])
+    ax.legend(); ax.grid(True,lw=.4)
+    st.pyplot(fig,use_container_width=True); plt.close(fig)
 
     # ── Trend plot ──────────────────────────────────────────────────────────
     sec("📉 Trend – Actual vs Predicted")
@@ -728,6 +743,7 @@ with t4:
     st.download_button("⬇ Download Metrics CSV",
                        sdf.to_csv().encode(),"metrics_summary.csv","text/csv")
 
+    # interpretasi metrik
     te_mape=results["Testing"]["MAPE (%)"]
     te_mae =results["Testing"]["MAE"]
     if te_mape<1:     kual="sangat baik (< 1%)"
