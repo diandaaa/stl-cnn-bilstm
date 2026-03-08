@@ -45,7 +45,7 @@ def tight_ylim(ax,arrs,pad=0.12):
     v=np.concatenate([np.asarray(a).flatten() for a in arrs if len(a)>0])
     lo,hi=np.nanmin(v),np.nanmax(v); r=(hi-lo)*pad; ax.set_ylim(lo-r,hi+r)
 
-# ── PyTorch ──────────────────────────────────────────────────────────────────
+# ── PyTorch ───────────────────────────────────────────────────────────────────
 import torch, torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -86,7 +86,7 @@ def train_model(model,Xtr,ytr,Xvl,yvl,epochs,bs,lr,patience=15):
     return h_tr,h_vl
 
 def sliding_predict(model,series,lb):
-    """One-step-ahead dengan teacher forcing — input selalu dari data ASLI."""
+    """Teacher forcing: tiap prediksi pakai window dari data ASLI (trainval only)."""
     model.eval(); preds=[]
     with torch.no_grad():
         for i in range(lb,len(series)):
@@ -95,6 +95,7 @@ def sliding_predict(model,series,lb):
     return np.array(preds,dtype=np.float32)
 
 def recursive_forecast(model,window,steps):
+    """Recursive: untuk test set & future — tidak memakai data test sama sekali."""
     model.eval(); w=list(window.copy()); out=[]; lb=len(window)
     with torch.no_grad():
         for _ in range(steps):
@@ -110,7 +111,6 @@ def build_dataset(arr,lb):
 def mape_fn(yt,yp):
     yt,yp=np.array(yt),np.array(yp); m=yt!=0
     return np.mean(np.abs((yt[m]-yp[m])/yt[m]))*100
-
 def mae_fn(yt,yp): return np.mean(np.abs(np.array(yt)-np.array(yp)))
 
 def fungsi_spektral(x):
@@ -120,8 +120,7 @@ def fungsi_spektral(x):
         w=(2*np.pi*i)/n; a=(2/n)*np.sum(x*np.cos(w*t)); b=(2/n)*np.sum(x*np.sin(w*t))
         pg[i-1]=a**2+b**2
     km=np.argmax(pg)+1; per=int(round((2*np.pi)/((2*np.pi*km)/n)))
-    Th=np.max(pg)/np.sum(pg); Tt=0.13135
-    return per,Th,Tt,Th>Tt,pg
+    return per,np.max(pg)/np.sum(pg),0.13135,np.max(pg)/np.sum(pg)>0.13135,pg
 
 def fdGPH(x,bw=0.5):
     import statsmodels.api as sm
@@ -129,8 +128,7 @@ def fdGPH(x,bw=0.5):
     m=int(np.floor(n**bw)); j=np.arange(1,m+1); lam=2*np.pi*j/n
     I=(1/(2*np.pi*n))*np.abs(np.fft.fft(x)[j])**2
     Y=np.log(I); Xm=sm.add_constant(np.log(4*(np.sin(lam/2)**2)))
-    mo=sm.OLS(Y,Xm).fit()
-    return -mo.params[1]
+    return -sm.OLS(Y,Xm).fit().params[1]
 
 def generate_random_sst(n=4071,seed=42):
     rng=np.random.default_rng(seed); t=np.arange(n)
@@ -139,10 +137,10 @@ def generate_random_sst(n=4071,seed=42):
     noise=rng.normal(0,0.09,n)
     for i in range(1,n): noise[i]+=0.62*noise[i-1]
     sst=np.clip(trend+seasonal+noise,27.38,30.67)
-    dates=pd.date_range("2015-01-01",periods=n,freq="D")
-    return pd.DataFrame({"tgl":dates.strftime("%-m/%-d/%Y"),"sst":np.round(sst,5)})
+    return pd.DataFrame({"tgl":pd.date_range("2015-01-01",periods=n,freq="D").strftime("%-m/%-d/%Y"),
+                         "sst":np.round(sst,5)})
 
-# ── SIDEBAR ──────────────────────────────────────────────────────────────────
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🌊 SST Forecast\n**CNN-BiLSTM + STL**"); st.caption("Backend: PyTorch CPU"); st.divider()
     st.markdown("### 📂 Data Source")
@@ -150,45 +148,51 @@ with st.sidebar:
     uploaded=None
     if data_source=="📁 Upload CSV":
         uploaded=st.file_uploader("Upload CSV",type=["csv"])
-        st.caption("Kolom tanggal + kolom SST numerik")
     else:
-        gen_n=st.slider("Jumlah hari",365,5000,4071,365); gen_seed=st.number_input("Seed data",value=42)
-    date_col=st.text_input("Nama kolom tanggal",value="tgl")
-    sst_col=st.text_input("Nama kolom target",value="sst"); st.divider()
+        gen_n=st.slider("Jumlah hari",365,5000,4071,365); gen_seed=st.number_input("Seed",value=42)
+    date_col=st.text_input("Kolom tanggal",value="tgl"); sst_col=st.text_input("Kolom SST",value="sst")
+    st.divider()
     st.markdown("### 🔧 Data Split")
     train_r=st.slider("Train ratio",0.50,0.95,0.90,0.01)
     val_r=st.slider("Val ratio",0.01,0.20,0.05,0.01)
-    test_r=round(1-train_r-val_r,4); st.markdown(f"**Test ratio (auto):** `{max(test_r,0):.2f}`")
+    st.markdown(f"**Test ratio (auto):** `{max(round(1-train_r-val_r,4),0):.2f}`")
     st.markdown("### 📅 STL")
-    auto_period=st.checkbox("Auto-detect period (spektral)",value=True); manual_period=365
+    auto_period=st.checkbox("Auto-detect period",value=True); manual_period=365
     if not auto_period: manual_period=st.number_input("Period manual",2,730,365)
     stl_robust=st.checkbox("STL robust",value=True)
     st.markdown("### 🧠 Trend Model")
-    t_conv_f=st.slider("Conv1D filters",8,128,16,8); t_kern=st.slider("Kernel size",2,15,3,1)
+    t_conv_f=st.slider("Conv filters",8,128,16,8); t_kern=st.slider("Kernel size",2,15,3,1)
     t_lstm=st.slider("BiLSTM units",16,128,32,16); t_drop=st.slider("Dropout",0.0,0.5,0.1,0.05)
     t_dense=st.slider("Dense units",8,128,16,8); t_lr=st.number_input("LR trend",value=0.001,format="%.4f")
     st.markdown("### 🧠 Seasonal Model")
-    s_conv_f=st.slider("Conv1D filters (S)",8,128,16,8); s_kern=st.slider("Kernel size (S)",2,15,3,1)
-    s_lstm=st.slider("BiLSTM units (S)",16,128,32,16); s_dense=st.slider("Dense units (S)",8,64,16,8)
+    s_conv_f=st.slider("Conv filters (S)",8,128,16,8); s_kern=st.slider("Kernel (S)",2,15,3,1)
+    s_lstm=st.slider("BiLSTM units (S)",16,128,32,16); s_dense=st.slider("Dense (S)",8,64,16,8)
     s_lr=st.number_input("LR seasonal",value=0.001,format="%.4f")
     st.markdown("### ⚙️ Training")
-    lookback=st.slider("Lookback",7,90,30,7,help="⚡ 30 hari — optimal untuk SST harian")
-    epochs=st.slider("Max epochs",10,300,100,10); batch_size=st.selectbox("Batch size",[32,64,128,256],index=1)
+    lookback=st.slider("Lookback",30,365,90,10,
+        help="Minimal = period/4. Untuk seasonal 365 hari, gunakan ≥90. Makin besar makin lambat.")
+    epochs=st.slider("Max epochs",10,300,100,10)
+    batch_size=st.selectbox("Batch size",[32,64,128,256],index=1)
     seed=st.number_input("Random seed",value=42); st.divider()
     run_btn=st.button("▶  Run Analysis",use_container_width=True,type="primary")
 
-# ── HEADER ───────────────────────────────────────────────────────────────────
+# ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown("# 🌊 SST Time Series Analysis Dashboard")
 st.markdown("*Hybrid CNN-BiLSTM + STL · Sea Surface Temperature Forecasting*")
 if not run_btn:
-    st.info("👈 Pilih sumber data & atur parameter di sidebar, lalu klik **▶ Run Analysis**.")
-    st.markdown("**⚡ Tips cepat:** Lookback=30, BiLSTM=32, Filters=16, Epochs=100, Batch=64")
+    st.info("👈 Atur parameter di sidebar, lalu klik **▶ Run Analysis**.")
+    st.markdown("""
+**⚡ Tips performa:**
+- **Lookback = 90** → cukup cepat & bisa tangkap pola musiman
+- BiLSTM units = 32, Conv filters = 16, Epochs = 100
+- Test set diprediksi **recursive** dari window terakhir trainval (tanpa memakai data test)
+    """)
     with st.expander("📋 Format CSV"):
         s=generate_random_sst(10,42); st.dataframe(s,use_container_width=True)
         st.download_button("⬇ Contoh CSV",s.to_csv(index=False).encode(),"contoh.csv","text/csv")
     st.stop()
 
-# ── SEED & IMPORTS ────────────────────────────────────────────────────────────
+# ── INIT ──────────────────────────────────────────────────────────────────────
 torch.manual_seed(int(seed)); np.random.seed(int(seed)); random.seed(int(seed))
 try:
     from statsmodels.tsa.seasonal import STL
@@ -212,23 +216,23 @@ n_train=int(n*train_r); n_val=int(n*val_r); n_test=n-n_train-n_val
 if n_test<=0: st.error("Test set kosong."); st.stop()
 y_trainval=y_full[:n_train+n_val]
 
-# ── STL: trainval untuk analisis, FULL untuk prediksi ────────────────────────
+# ── STL: HANYA pada trainval (no leakage) ────────────────────────────────────
 with st.spinner("Running STL decomposition..."):
     periode=fungsi_spektral(y_trainval)[0] if auto_period else manual_period
-    stl_tv  =STL(y_trainval,period=periode,robust=stl_robust).fit()
-    stl_full=STL(y_full,    period=periode,robust=stl_robust).fit()
+    stl_tv=STL(y_trainval,period=periode,robust=stl_robust).fit()
 
-trend_tv  =stl_tv.trend;    season_tv =stl_tv.seasonal;   resid_tv  =stl_tv.resid
-trend_full=stl_full.trend;  season_full=stl_full.seasonal
+trend_tv=stl_tv.trend; season_tv=stl_tv.seasonal; resid_tv=stl_tv.resid
 
-# ── SCALING: fit pada train, transform full ───────────────────────────────────
-sc_t=MinMaxScaler().fit(trend_full[:n_train].reshape(-1,1))
-sc_s=MinMaxScaler().fit(season_full[:n_train].reshape(-1,1))
-t_full_s=sc_t.transform(trend_full.reshape(-1,1)).flatten().astype(np.float32)
-s_full_s=sc_s.transform(season_full.reshape(-1,1)).flatten().astype(np.float32)
+# ── SCALING: fit pada train saja ──────────────────────────────────────────────
+sc_t=MinMaxScaler().fit(trend_tv[:n_train].reshape(-1,1))
+sc_s=MinMaxScaler().fit(season_tv[:n_train].reshape(-1,1))
 
-t_tr_s=t_full_s[:n_train]; t_vl_s=t_full_s[n_train:n_train+n_val]
-s_tr_s=s_full_s[:n_train]; s_vl_s=s_full_s[n_train:n_train+n_val]
+# Normalized trainval
+t_tv_s=sc_t.transform(trend_tv.reshape(-1,1)).flatten().astype(np.float32)
+s_tv_s=sc_s.transform(season_tv.reshape(-1,1)).flatten().astype(np.float32)
+
+t_tr_s=t_tv_s[:n_train]; t_vl_s=t_tv_s[n_train:]
+s_tr_s=s_tv_s[:n_train]; s_vl_s=s_tv_s[n_train:]
 
 Xtt,ytt=build_dataset(t_tr_s,lookback)
 Xvt,yvt=build_dataset(np.concatenate([t_tr_s[-lookback:],t_vl_s]),lookback)
@@ -240,7 +244,7 @@ t0,t1,t2,t3,t4,t5=st.tabs([
     "📊 Data Overview","🔬 STL & Karakteristik",
     "🤖 Model Training","🎯 Forecast Results","📋 Metrics","🔮 Future Forecast"])
 
-# ═══════ TAB 0: DATA OVERVIEW ════════════════════════════════════════════════
+# ══════ TAB 0: DATA OVERVIEW ══════════════════════════════════════════════════
 with t0:
     c1,c2,c3,c4=st.columns(4)
     mcard(c1,"Total Points",f"{n:,}"); mcard(c2,"Train",f"{n_train:,}",f"{train_r*100:.0f}%")
@@ -262,26 +266,27 @@ with t0:
     y_norm=sc_full.transform(y_full.reshape(-1,1)).flatten()
     ca,cb=st.columns(2)
     with ca:
-        st.markdown("**Data Asli (10 baris)**")
+        st.markdown("**Data Asli (10 baris pertama)**")
         raw_df=df[[sst_col]].reset_index().head(10).copy(); raw_df.columns=["Tanggal","SST (°C)"]
         st.dataframe(raw_df.style.format({"SST (°C)":"{:.5f}"}),use_container_width=True)
     with cb:
         st.markdown("**Sebelum & Sesudah Normalisasi**")
-        nd=pd.DataFrame({"Tanggal":dates[:10],"SST (°C)":np.round(y_full[:10],5),"Norm [0,1]":np.round(y_norm[:10],5)})
+        nd=pd.DataFrame({"Tanggal":dates[:10],"SST (°C)":np.round(y_full[:10],5),
+                         "Norm [0,1]":np.round(y_norm[:10],5)})
         st.dataframe(nd.style.format({"SST (°C)":"{:.5f}","Norm [0,1]":"{:.5f}"}),use_container_width=True)
     sec("📊 Statistik Deskriptif")
     st.dataframe(df[[sst_col]].describe().T.round(4),use_container_width=True)
     st.download_button("⬇ Download data",df[[sst_col]].reset_index().to_csv(index=False).encode(),"data.csv","text/csv")
 
-# ═══════ TAB 1: STL & KARAKTERISTIK ══════════════════════════════════════════
+# ══════ TAB 1: STL & KARAKTERISTIK ════════════════════════════════════════════
 with t1:
-    st.success(f"STL selesai · Period = **{periode}** hari")
+    st.success(f"STL selesai · Period = **{periode}** hari  ·  Data: trainval only (no leakage)")
     sec("🔬 STL Decomposition")
     fig,axes=plt.subplots(4,1,figsize=(14,10),sharex=True)
     for ax,(nm,val,col) in zip(axes,[("Observed",stl_tv.observed,PAL["actual"]),
-                                     ("Trend",trend_tv,PAL["trend"]),
-                                     ("Seasonal",season_tv,PAL["season"]),
-                                     ("Residual",resid_tv,PAL["resid"])]):
+                                      ("Trend",trend_tv,PAL["trend"]),
+                                      ("Seasonal",season_tv,PAL["season"]),
+                                      ("Residual",resid_tv,PAL["resid"])]):
         ax.plot(val,color=col,lw=1.2); ax.fill_between(range(len(val)),val,alpha=.1,color=col)
         ax.set_ylabel(nm,fontsize=9,color="#e2e8f0"); ax.grid(True,lw=.4); tight_ylim(ax,[val])
     axes[-1].set_xlabel("Index"); fig.suptitle(f"STL Decomposition (period={periode})",fontsize=11)
@@ -298,8 +303,8 @@ with t1:
     elif d_gph<1.0: mc,ms="Long Memory – Non-Stasioner","0.5 ≤ d < 1"
     else:           mc,ms="Non-Stasioner Kuat","d ≥ 1"
     c1,c2=st.columns(2); mcard(c1,"GPH d estimate",f"{d_gph:.4f}"); mcard(c2,"Memory Class",mc,ms)
-    slope=(trend_tv[-1]-trend_tv[0])/len(trend_tv); arah="meningkat" if slope>0 else "menurun"
-    narasi(f"Tren secara umum **{arah}** dengan rentang **{trend_tv.max()-trend_tv.min():.4f}°C**. "
+    arah="meningkat" if trend_tv[-1]>trend_tv[0] else "menurun"
+    narasi(f"Tren secara umum **{arah}** (rentang **{trend_tv.max()-trend_tv.min():.4f}°C**). "
            f"GPH d={d_gph:.4f} → {mc}: {ms}.")
     sec("📈 Karakteristik Musiman – Spektral")
     per_sp,Th,Tt,mus,pg=fungsi_spektral(y_trainval)
@@ -312,11 +317,10 @@ with t1:
     ax.axvline(np.argmax(pg),color="#f87171",lw=1.5,ls="--",label=f"Peak @ idx={np.argmax(pg)}")
     ax.set_title("Periodogram – Komponen Musiman"); ax.set_xlabel("Freq Index"); ax.set_ylabel("Power")
     ax.legend(); ax.grid(True,lw=.4); st.pyplot(fig,use_container_width=True); plt.close(fig)
-    s_amp=season_tv.max()-season_tv.min()
-    narasi(f"Periode dominan **{per_sp} hari**, amplitudo musiman **{s_amp:.4f}°C**. "
+    narasi(f"Periode dominan **{per_sp} hari**, amplitudo musiman **{season_tv.max()-season_tv.min():.4f}°C**. "
            f"{'Pola musiman signifikan terdeteksi' if mus else 'Tidak ada pola musiman signifikan'}.")
 
-# ═══════ TAB 2: TRAINING ═════════════════════════════════════════════════════
+# ══════ TAB 2: TRAINING ═══════════════════════════════════════════════════════
 with t2:
     sec("🤖 Training CNN-BiLSTM")
     col1,col2=st.columns(2)
@@ -340,33 +344,32 @@ with t2:
         ax.plot(hs_tr,color=PAL["season"],lw=1.4,label="Train"); ax.plot(hs_val,color=PAL["val"],lw=1.4,ls="--",label="Val")
         ax.set_title("Seasonal – Loss Curve"); ax.set_xlabel("Epoch"); ax.legend(); ax.grid(True,lw=.4)
         st.pyplot(fig,use_container_width=True); plt.close(fig)
-    # Simpan ke session state — SEMUA yang dibutuhkan tab berikutnya
     st.session_state.update(dict(
         trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
-        t_full_s=t_full_s, s_full_s=s_full_s,   # ← full normalized series
+        t_tv_s=t_tv_s, s_tv_s=s_tv_s,   # normalized trainval
     ))
 
-# ═══════ TAB 3: FORECAST ═════════════════════════════════════════════════════
+# ══════ TAB 3: FORECAST ═══════════════════════════════════════════════════════
 with t3:
     if "trained" not in st.session_state:
         st.info("Jalankan training terlebih dahulu (tab 🤖)."); st.stop()
-    TM     =st.session_state["TM"];     SM     =st.session_state["SM"]
-    sc_t   =st.session_state["sc_t"];   sc_s   =st.session_state["sc_s"]
-    t_full_s=st.session_state["t_full_s"]; s_full_s=st.session_state["s_full_s"]
+    TM=st.session_state["TM"]; SM=st.session_state["SM"]
+    sc_t=st.session_state["sc_t"]; sc_s=st.session_state["sc_s"]
+    t_tv_s=st.session_state["t_tv_s"]; s_tv_s=st.session_state["s_tv_s"]
 
-    with st.spinner("Menghitung prediksi (teacher forcing pada seluruh data)…"):
-        # ── Teacher forcing: sliding window dari komponen STL ASLI ──────────
-        # Train predictions
-        tp_tr_s=sliding_predict(TM, t_full_s[:n_train], lookback)
-        sp_tr_s=sliding_predict(SM, s_full_s[:n_train], lookback)
-        # Val predictions (window dimulai dari akhir train)
-        tp_vl_s=sliding_predict(TM, t_full_s[:n_train+n_val], lookback)[-n_val:]
-        sp_vl_s=sliding_predict(SM, s_full_s[:n_train+n_val], lookback)[-n_val:]
-        # Test predictions (teacher forcing pakai STL full — SAMA seperti Colab)
-        tp_te_s=sliding_predict(TM, t_full_s, lookback)[-n_test:]
-        sp_te_s=sliding_predict(SM, s_full_s, lookback)[-n_test:]
+    with st.spinner("Menghitung prediksi…"):
+        # ── Train & Val: teacher forcing (window dari data trainval ASLI) ────
+        tp_tr_s=sliding_predict(TM,t_tv_s[:n_train],lookback)
+        sp_tr_s=sliding_predict(SM,s_tv_s[:n_train],lookback)
+        tp_vl_s=sliding_predict(TM,t_tv_s,lookback)[-n_val:]
+        sp_vl_s=sliding_predict(SM,s_tv_s,lookback)[-n_val:]
 
-    # Inverse transform → °C
+        # ── Test: recursive dari window TERAKHIR trainval (no leakage) ───────
+        window_t=t_tv_s[-lookback:]; window_s=s_tv_s[-lookback:]
+        tp_te_s=recursive_forecast(TM,window_t,n_test)
+        sp_te_s=recursive_forecast(SM,window_s,n_test)
+
+    # Inverse transform
     tp_tr=sc_t.inverse_transform(tp_tr_s.reshape(-1,1)).flatten()
     tp_vl=sc_t.inverse_transform(tp_vl_s.reshape(-1,1)).flatten()
     tp_te=sc_t.inverse_transform(tp_te_s.reshape(-1,1)).flatten()
@@ -380,52 +383,38 @@ with t3:
     y_tr_true=y_full[lookback:n_train]
     y_vl_true=y_full[n_train:n_train+n_val]
     y_te_true=y_full[n_train+n_val:]
+    d_tr=dates[lookback:n_train]; d_vl=dates[n_train:n_train+n_val]; d_te=dates[n_train+n_val:]
 
-    d_tr=dates[lookback:n_train]
-    d_vl=dates[n_train:n_train+n_val]
-    d_te=dates[n_train+n_val:]
-
-    # ── PLOT HELPER: prediksi di atas actual ─────────────────────────────────
-    def forecast_plot(title, actual_dates, actual, segs):
+    def fplot(title,act_d,act_y,segs):
         fig,ax=plt.subplots(figsize=(14,3.6))
-        # Actual: biru tipis transparan → DULU
-        ax.plot(actual_dates, actual, color=PAL["actual"], lw=2.0, alpha=0.5,
-                label="Actual", zorder=2)
-        # Prediksi: berwarna tebal → SETELAH (zorder lebih tinggi)
+        # Actual dulu — transparan agar prediksi terlihat
+        ax.plot(act_d,act_y,color=PAL["actual"],lw=2.0,alpha=0.45,label="Actual",zorder=2)
         for d,y,col,lbl,zo in segs:
-            ax.plot(d, y, color=col, lw=2.0, label=lbl, zorder=zo)
-        ax.set_title(title); tight_ylim(ax,[actual]+[s[1] for s in segs])
+            ax.plot(d,y,color=col,lw=2.0,label=lbl,zorder=zo)
+        ax.set_title(title); tight_ylim(ax,[act_y]+[s[1] for s in segs])
         ax.legend(loc="upper left"); ax.grid(True,lw=.4)
         st.pyplot(fig,use_container_width=True); plt.close(fig)
 
     sec("📉 Trend – Actual vs Predicted")
-    forecast_plot("Trend – Actual vs Predicted",
-        dates[:n_train+n_val], trend_tv,
-        [(d_tr,tp_tr,PAL["train"],"Train",4),
-         (d_vl,tp_vl,PAL["val"],"Val",4),
-         (d_te,tp_te,PAL["test"],"Test",5)])
+    fplot("Trend – Actual vs Predicted", dates[:n_train+n_val], trend_tv,
+          [(d_tr,tp_tr,PAL["train"],"Train",4),(d_vl,tp_vl,PAL["val"],"Val",4),(d_te,tp_te,PAL["test"],"Test Recursive",5)])
 
     sec("🌊 Seasonal – Actual vs Predicted")
-    forecast_plot("Seasonal – Actual vs Predicted",
-        dates[:n_train+n_val], season_tv,
-        [(d_tr,sp_tr,PAL["train"],"Train",4),
-         (d_vl,sp_vl,PAL["val"],"Val",4),
-         (d_te,sp_te,PAL["test"],"Test",5)])
+    fplot("Seasonal – Actual vs Predicted", dates[:n_train+n_val], season_tv,
+          [(d_tr,sp_tr,PAL["train"],"Train",4),(d_vl,sp_vl,PAL["val"],"Val",4),(d_te,sp_te,PAL["test"],"Test Recursive",5)])
 
     sec("🔀 Hybrid – Full Series")
-    forecast_plot("Hybrid Reconstruction – Full Series",
-        dates, y_full,
-        [(d_tr,h_tr,PAL["train"],"Hybrid Train",4),
-         (d_vl,h_vl,PAL["val"],"Hybrid Val",4),
-         (d_te,h_te,PAL["test"],"Hybrid Test",5)])
+    fplot("Hybrid Reconstruction – Full Series", dates, y_full,
+          [(d_tr,h_tr,PAL["train"],"Hybrid Train",4),(d_vl,h_vl,PAL["val"],"Hybrid Val",4),(d_te,h_te,PAL["test"],"Hybrid Test",5)])
 
     sec("🎯 Test Set – Actual vs Predicted")
     fig,ax=plt.subplots(figsize=(12,4))
-    ax.plot(d_te, y_te_true, color=PAL["actual"], lw=2.0, alpha=0.5, label="Actual", zorder=2)
-    ax.plot(d_te, h_te,      color=PAL["test"],   lw=2.0,            label="Predicted", zorder=5)
-    ax.fill_between(d_te, y_te_true, h_te, alpha=.07, color=PAL["test"])
-    ax.set_title("TEST SET – Actual vs Predicted"); tight_ylim(ax,[y_te_true,h_te])
-    ax.legend(); ax.grid(True,lw=.4); st.pyplot(fig,use_container_width=True); plt.close(fig)
+    ax.plot(d_te,y_te_true,color=PAL["actual"],lw=2.0,alpha=0.5,label="Actual",zorder=2)
+    ax.plot(d_te,h_te,color=PAL["test"],lw=2.0,label="Predicted (recursive)",zorder=5)
+    ax.fill_between(d_te,y_te_true,h_te,alpha=.07,color=PAL["test"])
+    ax.set_title("TEST SET – Actual vs Predicted (recursive forecast)")
+    tight_ylim(ax,[y_te_true,h_te]); ax.legend(); ax.grid(True,lw=.4)
+    st.pyplot(fig,use_container_width=True); plt.close(fig)
 
     sec("📋 Tabel – 10 Data Terakhir Test")
     df_l10=pd.DataFrame({
@@ -439,20 +428,19 @@ with t3:
     st.download_button("⬇ Download Prediksi Test",
         pd.DataFrame({"date":d_te,"actual":y_te_true,"predicted":h_te}).to_csv(index=False).encode(),
         "test_predictions.csv","text/csv")
-
     st.session_state.update(dict(
-        h_tr=h_tr, h_vl=h_vl, h_te=h_te,
-        y_tr_true=y_tr_true, y_vl_true=y_vl_true, y_te_true=y_te_true,
-        tl_last=t_full_s[-lookback:], sl_last=s_full_s[-lookback:],
+        h_tr=h_tr,h_vl=h_vl,h_te=h_te,
+        y_tr_true=y_tr_true,y_vl_true=y_vl_true,y_te_true=y_te_true,
+        window_t=window_t,window_s=window_s,
     ))
 
-# ═══════ TAB 4: METRICS ══════════════════════════════════════════════════════
+# ══════ TAB 4: METRICS ════════════════════════════════════════════════════════
 with t4:
     if "h_te" not in st.session_state:
         st.info("Jalankan forecast terlebih dahulu."); st.stop()
     h_tr=st.session_state["h_tr"]; h_vl=st.session_state["h_vl"]; h_te=st.session_state["h_te"]
     y_tr_true=st.session_state["y_tr_true"]; y_vl_true=st.session_state["y_vl_true"]; y_te_true=st.session_state["y_te_true"]
-    sec("📊 Evaluasi Model Hybrid – MAPE & MAE")
+    sec("📊 Evaluasi Hybrid – MAPE & MAE")
     sets={"Training":(y_tr_true,h_tr),"Validation":(y_vl_true,h_vl),"Testing":(y_te_true,h_te)}
     cols_m=st.columns(3); results={}
     for (lbl,(yt,yp)),col in zip(sets.items(),cols_m):
@@ -464,23 +452,23 @@ with t4:
     st.download_button("⬇ Download Metrics",sdf.to_csv().encode(),"metrics.csv","text/csv")
     te_mape=results["Testing"]["MAPE (%)"]
     kual="sangat baik (<1%)" if te_mape<1 else "baik (1–5%)" if te_mape<5 else "cukup (5–10%)" if te_mape<10 else "perlu perbaikan (>10%)"
-    narasi(f"MAPE testing **{te_mape:.2f}%**, MAE **{results['Testing']['MAE']:.4f}°C** — **{kual}**.")
+    narasi(f"MAPE testing **{te_mape:.2f}%**, MAE **{results['Testing']['MAE']:.4f}°C** — **{kual}**. "
+           f"Test diprediksi secara recursive murni tanpa menggunakan data test.")
 
-# ═══════ TAB 5: FUTURE FORECAST ══════════════════════════════════════════════
+# ══════ TAB 5: FUTURE FORECAST ════════════════════════════════════════════════
 with t5:
-    if "tl_last" not in st.session_state:
+    if "window_t" not in st.session_state:
         st.info("Jalankan forecast terlebih dahulu di tab 🎯."); st.stop()
     TM=st.session_state["TM"]; SM=st.session_state["SM"]
     sc_t=st.session_state["sc_t"]; sc_s=st.session_state["sc_s"]
-    tl_last=st.session_state["tl_last"]; sl_last=st.session_state["sl_last"]
+    window_t=st.session_state["window_t"]; window_s=st.session_state["window_s"]
     STEPS=10
     freq_g=pd.infer_freq(dates[:50]) or "D"
     fut_dates=pd.date_range(dates[-1],periods=STEPS+1,freq=freq_g)[1:]
-    with st.spinner("Menghitung future forecast (recursive)…"):
-        tf_s=recursive_forecast(TM,tl_last,STEPS); sf_s=recursive_forecast(SM,sl_last,STEPS)
+    with st.spinner("Future forecast (recursive)…"):
+        tf_s=recursive_forecast(TM,window_t,STEPS); sf_s=recursive_forecast(SM,window_s,STEPS)
     tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
-    sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
-    hf=tf+sf
+    sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten(); hf=tf+sf
     sec("🔮 Forecast 10 Periode ke Depan")
     tail=min(90,n); fig,ax=plt.subplots(figsize=(14,4))
     ax.plot(dates[-tail:],y_full[-tail:],color=PAL["actual"],lw=1.8,alpha=0.6,label="Actual (tail)",zorder=2)
@@ -489,7 +477,7 @@ with t5:
     ax.set_title("Future Forecast – 10 Periode ke Depan"); ax.set_ylabel("SST (°C)")
     tight_ylim(ax,[y_full[-tail:],hf]); ax.legend(); ax.grid(True,lw=.4)
     st.pyplot(fig,use_container_width=True); plt.close(fig)
-    sec("📋 Tabel Forecast – Sebelum & Sesudah Denormalisasi")
+    sec("📋 Tabel – Sebelum & Sesudah Denormalisasi")
     ca,cb=st.columns(2)
     with ca:
         st.markdown("**Sebelum Denormalisasi**")
@@ -504,4 +492,4 @@ with t5:
             .background_gradient(subset=["SST Pred (°C)"],cmap="Blues"),use_container_width=True)
     st.download_button("⬇ Download Future CSV",df_out.to_csv(index=False).encode(),"future_forecast.csv","text/csv")
     narasi(f"Proyeksi SST: **{hf.min():.4f}–{hf.max():.4f}°C**. "
-           "Akurasi menurun seiring bertambahnya horizon karena akumulasi error recursive.")
+           "Future forecast memakai window terakhir trainval, tidak ada data test yang digunakan.")
