@@ -676,43 +676,52 @@ with t5:
     ca_ctrl, cb_ctrl = st.columns([2,3])
     with ca_ctrl:
         STEPS = st.slider("📅 Jumlah hari forecast", min_value=7, max_value=365,
-                          value=30, step=1)
+                          value=st.session_state.get("fc_steps_ui", 30), step=1,
+                          key="fc_steps_ui")
     with cb_ctrl:
         tail_days = st.slider("📈 Tampilkan data aktual (hari terakhir)",
                               min_value=30, max_value=min(365,n),
-                              value=min(90,n), step=10)
+                              value=st.session_state.get("fc_tail_ui", min(90,n)), step=10,
+                              key="fc_tail_ui")
 
     freq_g=pd.infer_freq(dates[:50]) or "D"
     fut_dates=pd.date_range(dates[-1],periods=STEPS+1,freq=freq_g)[1:]
 
-    with st.spinner(f"Menghitung forecast {STEPS} hari ke depan…"):
-        from statsmodels.tsa.seasonal import STL as _STL
-        stl_full=_STL(y_full, period=periode, robust=stl_robust).fit()
-        trend_full_fc =stl_full.trend
-        season_full_fc=stl_full.seasonal
+    # ── Cache STL full data — hitung sekali, simpan ke session_state ──
+    if "stl_full_tf" not in st.session_state:
+        with st.spinner("Menghitung STL full data…"):
+            from statsmodels.tsa.seasonal import STL as _STL
+            _stl=_STL(y_full, period=periode, robust=stl_robust).fit()
+            _tf=sc_t.transform(_stl.trend.reshape(-1,1)).flatten().astype(np.float32)
+            _sf=sc_s.transform(_stl.seasonal.reshape(-1,1)).flatten().astype(np.float32)
+            st.session_state["stl_full_tf"]=_tf
+            st.session_state["stl_full_sf"]=_sf
+    tf_full_s=st.session_state["stl_full_tf"]
+    sf_full_s=st.session_state["stl_full_sf"]
 
-        tf_full_s=sc_t.transform(trend_full_fc.reshape(-1,1)).flatten().astype(np.float32)
-        sf_full_s=sc_s.transform(season_full_fc.reshape(-1,1)).flatten().astype(np.float32)
-
-        # Trend: recursive dari window terakhir full data
-        window_t_fc=tf_full_s[-lookback:]
-        tf_s=recursive_forecast(TM, window_t_fc, STEPS)
-        tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
-
-        # Seasonal: sliding window shift 1 periode + tile
-        sf_tiled=np.concatenate([sf_full_s, sf_full_s[-periode:]])
-        sf_fc_list=[]
-        for i in range(STEPS):
-            end  =min(len(sf_full_s)-periode+i, len(sf_tiled))
-            start=max(end-lookback, 0)
-            win  =sf_tiled[start:end]
-            if len(win)<lookback:
-                win=np.pad(win,(lookback-len(win),0),mode='edge')
-            sf_fc_list.append(win)
-        sf_s=predict_model(SM, np.array(sf_fc_list,dtype=np.float32))
-        sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
-
-        hf=tf+sf
+    # ── Forecast — hitung ulang hanya kalau STEPS berubah ─────────────
+    if st.session_state.get("fc_steps") != STEPS:
+        with st.spinner(f"Menghitung forecast {STEPS} hari…"):
+            window_t_fc=tf_full_s[-lookback:]
+            tf_s=recursive_forecast(TM, window_t_fc, STEPS)
+            tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
+            sf_tiled=np.concatenate([sf_full_s, sf_full_s[-periode:]])
+            sf_fc_list=[]
+            for i in range(STEPS):
+                end  =min(len(sf_full_s)-periode+i, len(sf_tiled))
+                start=max(end-lookback, 0)
+                win  =sf_tiled[start:end]
+                if len(win)<lookback:
+                    win=np.pad(win,(lookback-len(win),0),mode='edge')
+                sf_fc_list.append(win)
+            sf_s=predict_model(SM, np.array(sf_fc_list,dtype=np.float32))
+            sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
+            hf=tf+sf
+            st.session_state.update({"fc_steps":STEPS,"fc_tf_s":tf_s,
+                                     "fc_tf":tf,"fc_sf_s":sf_s,"fc_sf":sf,"fc_hf":hf})
+    tf_s=st.session_state["fc_tf_s"]; tf=st.session_state["fc_tf"]
+    sf_s=st.session_state["fc_sf_s"]; sf=st.session_state["fc_sf"]
+    hf =st.session_state["fc_hf"]
 
     sec(f"🔮 Forecast {STEPS} Hari ke Depan")
     fig,ax=plt.subplots(figsize=(14,4))
