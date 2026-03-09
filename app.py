@@ -1,10 +1,4 @@
-"""
-Dashboard SST – CNN-BiLSTM + STL  |  PyTorch CPU  |  streamlit run app.py
-Arsitektur persis Colab:
-  Trend  : Conv1D(32,k=5,causal) → BiLSTM(64) → Dropout(0.2) → Dense(32) → Dense(1)
-  Seasonal: Conv1D(64,k=5,causal) → BiLSTM(64) → Dense(16) → Dense(1)
-Test forecast: recursive dari window terakhir trainval (no leakage)
-"""
+"""Dashboard SST – CNN-BiLSTM + STL | PyTorch | streamlit run app.py"""
 import warnings; warnings.filterwarnings("ignore")
 import streamlit as st, random, numpy as np, pandas as pd, matplotlib.pyplot as plt
 
@@ -55,10 +49,8 @@ def tight_ylim(ax,arrs,pad=0.12):
 import torch, torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-# ── CPU speed optimizations ───────────────────────────────────
-torch.set_float32_matmul_precision("medium")   # faster matmul on CPU
-torch.set_num_threads(max(1, torch.get_num_threads()))  # use all available cores
-torch.backends.cudnn.benchmark = False  # CPU only
+torch.set_float32_matmul_precision("medium")
+torch.set_num_threads(max(1, torch.get_num_threads()))
 
 import torch.nn.functional as F
 
@@ -115,7 +107,7 @@ def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
             running+=l.item()
         tl=running/n_batches
         model.eval()
-        with torch.inference_mode():  # lebih cepat dari no_grad
+        with torch.inference_mode():
             vl=crit(model(Xv),yv).item()
         h_tr.append(tl); h_vl.append(vl); sched.step(vl)
         if vl<best_val-1e-7:
@@ -195,7 +187,6 @@ def _plot_loss(ax, tr, vl, title, color):
 
 
 def fungsi_spektral(x):
-    # Vectorized via FFT — hasil identik, ribuan kali lebih cepat dari loop manual
     x=np.asarray(x,dtype=float); n=len(x); k=round((n-1)/2)
     fft=np.fft.rfft(x); j=np.arange(1,k+1)
     a=(2/n)*fft[j].real; b=-(2/n)*fft[j].imag
@@ -227,7 +218,7 @@ def generate_random_sst(n=4071, seed=42):
 # ═══════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🌊 SST Forecast\n**CNN-BiLSTM + STL**")
-    st.caption("Backend: PyTorch CPU"); st.divider()
+    st.divider()
 
     st.markdown("### 📂 Data Source")
     data_source=st.radio("Pilih sumber data:",["📁 Upload CSV","🎲 Generate Data Contoh"])
@@ -268,12 +259,9 @@ with st.sidebar:
     s_lr    =st.number_input("LR seasonal", value=0.0005,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",  30,365,90,10,
-        help="90 = ~3-5 menit di CPU. Naikkan ke 180 untuk hasil persis Colab (lebih lama).")
-    epochs    =st.slider("Max epochs",10,500,100,10,
-        help="Early stopping patience=20 aktif — biasanya berhenti jauh sebelum max.")
-    batch_size=st.selectbox("Batch size",[16,32,64,128],index=3,
-        help="128 lebih cepat dari 64 tanpa pengaruh signifikan ke akurasi.")
+    lookback  =st.slider("Lookback",  30,365,90,10)
+    epochs    =st.slider("Max epochs",10,500,100,10)
+    batch_size=st.selectbox("Batch size",[16,32,64,128],index=3)
     seed      =st.number_input("Random seed",value=42)
     st.divider()
     run_btn=st.button("▶  Run Analysis",use_container_width=True,type="primary")
@@ -286,15 +274,7 @@ st.markdown("*Hybrid CNN-BiLSTM + STL · Sea Surface Temperature Forecasting*")
 
 if not run_btn:
     st.info("👈 Atur parameter di sidebar, lalu klik **▶ Run Analysis**.")
-    st.markdown("""
-**⚡ Estimasi waktu training di Streamlit Cloud (CPU):**
-- Lookback **180** + BiLSTM 64 → ~8–15 menit *(akurat, mirip Colab)*
-- Lookback **90** + BiLSTM 64 → ~4–8 menit *(akurasi sedikit turun)*
-- Lookback **90** + BiLSTM 32 → ~2–4 menit *(lebih cepat, akurasi berkurang)*
-
-**Optimasi CPU yang sudah aktif:** `torch.compile`, float32 medium precision, max CPU threads, batch size 128.
-    """)
-    with st.expander("📋 Format CSV"):
+    with st.expander("📋 Format CSV yang diterima"):
         s=generate_random_sst(10,42); st.dataframe(s,use_container_width=True)
         st.download_button("⬇ Contoh CSV",s.to_csv(index=False).encode(),"contoh.csv","text/csv")
     st.stop()
