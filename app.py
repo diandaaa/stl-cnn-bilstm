@@ -692,20 +692,25 @@ with t5:
     TM=st.session_state["TM"]; SM=st.session_state["SM"]
     sc_t=st.session_state["sc_t"]; sc_s=st.session_state["sc_s"]
 
-    STEPS=10
+    # ── Kontrol panjang forecast ───────────────────────────────
+    ca_ctrl, cb_ctrl = st.columns([2,3])
+    with ca_ctrl:
+        STEPS = st.slider("📅 Jumlah hari forecast", min_value=7, max_value=365,
+                          value=30, step=1)
+    with cb_ctrl:
+        tail_days = st.slider("📈 Tampilkan data aktual (hari terakhir)",
+                              min_value=30, max_value=min(365,n),
+                              value=min(90,n), step=10)
+
     freq_g=pd.infer_freq(dates[:50]) or "D"
     fut_dates=pd.date_range(dates[-1],periods=STEPS+1,freq=freq_g)[1:]
 
-    with st.spinner("Future forecast dari full data…"):
-        # ── STL pada FULL DATA (termasuk test) ────────────────
-        # Untuk future forecast ini valid — semua data sudah diketahui,
-        # kita mau window terbaik untuk prediksi ke depan
+    with st.spinner(f"Menghitung forecast {STEPS} hari ke depan…"):
         from statsmodels.tsa.seasonal import STL as _STL
         stl_full=_STL(y_full, period=periode, robust=stl_robust).fit()
         trend_full_fc =stl_full.trend
         season_full_fc=stl_full.seasonal
 
-        # Scale ulang pakai scaler yang sama (fit pada train saja)
         tf_full_s=sc_t.transform(trend_full_fc.reshape(-1,1)).flatten().astype(np.float32)
         sf_full_s=sc_s.transform(season_full_fc.reshape(-1,1)).flatten().astype(np.float32)
 
@@ -714,12 +719,13 @@ with t5:
         tf_s=recursive_forecast(TM, window_t_fc, STEPS)
         tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
 
-        # Seasonal: sliding window shift 1 periode dari full data
+        # Seasonal: sliding window shift 1 periode + tile
+        sf_tiled=np.concatenate([sf_full_s, sf_full_s[-periode:]])
         sf_fc_list=[]
         for i in range(STEPS):
-            end  =min(len(sf_full_s)-periode+i, len(sf_full_s))
+            end  =min(len(sf_full_s)-periode+i, len(sf_tiled))
             start=max(end-lookback, 0)
-            win  =sf_full_s[start:end]
+            win  =sf_tiled[start:end]
             if len(win)<lookback:
                 win=np.pad(win,(lookback-len(win),0),mode='edge')
             sf_fc_list.append(win)
@@ -728,16 +734,22 @@ with t5:
 
         hf=tf+sf
 
-    sec("🔮 Forecast 10 Periode ke Depan")
-    tail=min(90,n); fig,ax=plt.subplots(figsize=(14,4))
-    ax.plot(dates[-tail:],y_full[-tail:],color=PAL["actual"],lw=1.8,alpha=0.6,
-            label="Actual (tail)",zorder=2)
+    sec(f"🔮 Forecast {STEPS} Hari ke Depan")
+    fig,ax=plt.subplots(figsize=(14,4))
+    ax.plot(dates[-tail_days:],y_full[-tail_days:],color=PAL["actual"],lw=1.8,
+            alpha=0.6,label=f"Actual ({tail_days} hari terakhir)",zorder=2)
     ax.plot(fut_dates,hf,color=PAL["future"],lw=2.2,
-            label="Future Forecast",marker="o",markersize=5,zorder=5)
-    ax.axvline(dates[-1],color="#64748b",lw=1,ls=":",alpha=.7)
-    ax.set_title("Future Forecast – 10 Periode ke Depan"); ax.set_ylabel("SST (°C)")
-    tight_ylim(ax,[y_full[-tail:],hf]); ax.legend(); ax.grid(True,lw=.4)
+            label=f"Forecast ({STEPS} hari)",marker="o",markersize=4,zorder=5)
+    ax.axvline(dates[-1],color="#64748b",lw=1,ls=":",alpha=.7,label="Batas data")
+    ax.set_title(f"Future Forecast – {STEPS} Hari ke Depan"); ax.set_ylabel("SST (°C)")
+    tight_ylim(ax,[y_full[-tail_days:],hf]); ax.legend(); ax.grid(True,lw=.4)
     st.pyplot(fig,use_container_width=True); plt.close(fig)
+
+    # Metric ringkas
+    m1,m2,m3=st.columns(3)
+    mcard(m1,"Min Forecast",f"{hf.min():.4f} °C")
+    mcard(m2,"Max Forecast",f"{hf.max():.4f} °C")
+    mcard(m3,"Mean Forecast",f"{hf.mean():.4f} °C")
 
     sec("📋 Tabel – Sebelum & Sesudah Denormalisasi")
     ca,cb=st.columns(2)
@@ -758,5 +770,6 @@ with t5:
             use_container_width=True)
     st.download_button("⬇ Download Future CSV",
         df_out.to_csv(index=False).encode(),"future_forecast.csv","text/csv")
-    narasi(f"Proyeksi SST: **{hf.min():.4f}–{hf.max():.4f}°C**. "
-           f"STL di-fit pada full data ({n} baris) untuk window terbaik ke depan.")
+    narasi(f"Proyeksi SST {STEPS} hari: **{hf.min():.4f}–{hf.max():.4f}°C**, "
+           f"rata-rata **{hf.mean():.4f}°C**. "
+           f"STL di-fit pada full data ({n} baris) untuk window terbaik.")
