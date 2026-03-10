@@ -44,7 +44,7 @@ def tight_ylim(ax,arrs,pad=0.12):
     lo,hi=np.nanmin(v),np.nanmax(v); r=(hi-lo)*pad; ax.set_ylim(lo-r,hi+r)
 
 # ═══════════════════════════════════════════════════════════════
-# PYTORCH — arsitektur 1:1 dengan Colab
+# PYTORCH
 # ═══════════════════════════════════════════════════════════════
 import torch, torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -55,7 +55,6 @@ torch.set_num_threads(max(1, torch.get_num_threads()))
 import torch.nn.functional as F
 
 class TrendModel(nn.Module):
-    """Conv1D(32,k=5,causal) → BiLSTM(64) → Dropout(0.2) → Dense(32) → Dense(1)"""
     def __init__(self, lb, cf=32, ks=5, lu=64, du=32, drop=0.2):
         super().__init__()
         self.ks     = ks
@@ -64,15 +63,13 @@ class TrendModel(nn.Module):
         self.drop   = nn.Dropout(drop)
         self.fc1    = nn.Linear(lu*2, du)
         self.fc2    = nn.Linear(du, 1)
-
-    def forward(self, x):                          # x: (B, L, 1)
-        x = F.pad(x.permute(0,2,1),(self.ks-1,0)) # pad+permute in one step: (B,1,L+pad)
-        x = F.relu(self.conv(x)).permute(0,2,1)   # (B, L, cf)
+    def forward(self, x):
+        x = F.pad(x.permute(0,2,1),(self.ks-1,0))
+        x = F.relu(self.conv(x)).permute(0,2,1)
         out, _ = self.bilstm(x)
         return self.fc2(F.relu(self.fc1(self.drop(out[:,-1,:])))).squeeze(-1)
 
 class SeasonModel(nn.Module):
-    """Conv1D(64,k=5,causal) → BiLSTM(64) → Dense(16) → Dense(1)  [NO Dropout]"""
     def __init__(self, lb, cf=64, ks=5, lu=64, du=16):
         super().__init__()
         self.ks     = ks
@@ -80,7 +77,6 @@ class SeasonModel(nn.Module):
         self.bilstm = nn.LSTM(cf, lu, batch_first=True, bidirectional=True)
         self.fc1    = nn.Linear(lu*2, du)
         self.fc2    = nn.Linear(du, 1)
-
     def forward(self, x):
         x = F.pad(x.permute(0,2,1),(self.ks-1,0))
         x = F.relu(self.conv(x)).permute(0,2,1)
@@ -111,9 +107,7 @@ def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
             vl=crit(model(Xv),yv).item()
         h_tr.append(tl); h_vl.append(vl); sched.step(vl)
         if vl<best_val-1e-7:
-            best_val=vl
-            best_w=copy.deepcopy(model.state_dict())  # deepcopy lebih bersih
-            wait=0
+            best_val=vl; best_w=copy.deepcopy(model.state_dict()); wait=0
         else:
             wait+=1
             if wait>=patience: break
@@ -121,18 +115,15 @@ def train_model(model, Xtr, ytr, Xvl, yvl, epochs, bs, lr, patience=20):
     return h_tr, h_vl
 
 def predict_model(model, X):
-    """Batch predict — teacher forcing (dipakai untuk train & val)."""
     model.eval()
     with torch.inference_mode():
         t=torch.tensor(X, dtype=torch.float32).unsqueeze(-1)
         return model(t).numpy().flatten()
 
 def recursive_forecast(model, window, steps):
-    """Recursive murni persis Colab: w = np.append(w[1:], p)"""
     model.eval()
     w = window.copy().astype(np.float32)
     out = []
-    # pre-alloc tensor shape agar tidak re-alloc setiap step
     x_buf = torch.zeros(1, len(w), 1, dtype=torch.float32)
     with torch.inference_mode():
         for _ in range(steps):
@@ -153,12 +144,10 @@ def mape_fn(yt,yp):
 def mae_fn(yt,yp): return np.mean(np.abs(np.array(yt)-np.array(yp)))
 
 def _plot_loss(ax, tr, vl, title, color):
-    """Plot loss curve dengan smoothing + ylim yang benar."""
     tr_arr, vl_arr = np.array(tr), np.array(vl)
     ep = np.arange(1, len(tr_arr)+1)
     w  = max(5, len(tr_arr)//20)
-    # raw (transparan) + smoothed (solid)
-    ax.plot(ep, tr_arr, color=color,   lw=0.7, alpha=0.2)
+    ax.plot(ep, tr_arr, color=color,      lw=0.7, alpha=0.2)
     ax.plot(ep, vl_arr, color=PAL["val"], lw=0.7, alpha=0.2)
     if len(tr_arr) >= w:
         ax.plot(ep[w-1:], np.convolve(tr_arr,np.ones(w)/w,'valid'),
@@ -176,7 +165,6 @@ def _plot_loss(ax, tr, vl, title, color):
                 xytext=(best+1+max(len(vl_arr)//10,3), vl_arr[best]),
                 fontsize=7, color="#94a3b8",
                 arrowprops=dict(arrowstyle="->", color="#64748b", lw=0.7))
-    # clip spike awal dari y-axis
     clip = min(5, len(tr_arr)//10)
     vals = np.concatenate([tr_arr[clip:], vl_arr[clip:]])
     ymin, ymax = np.nanmin(vals), np.nanmax(vals)
@@ -196,6 +184,10 @@ def fungsi_spektral(x):
     return per,Th,Tt,Th>Tt,pg
 
 def fdGPH(x, bw=0.5):
+    """
+    GPH (Geweke-Porter-Hudak) estimator untuk fraktal differencing d.
+    Input x bisa data apapun — trainval SST asli, bukan komponen STL.
+    """
     import statsmodels.api as sm
     x=np.asarray(x,dtype=float)-np.mean(x); n=len(x)
     m=int(np.floor(n**bw)); j=np.arange(1,m+1); lam=2*np.pi*j/n
@@ -214,7 +206,7 @@ def generate_random_sst(n=4071, seed=42):
                          "sst":np.round(sst,5)})
 
 # ═══════════════════════════════════════════════════════════════
-# SIDEBAR — default persis Colab
+# SIDEBAR
 # ═══════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown("## 🌊 SST Forecast\n**CNN-BiLSTM + STL**")
@@ -402,43 +394,90 @@ with t1:
     mcard(c2,"Variance – Seasonal",f"{(1-np.var(stl.observed-season_trainval)/vo)*100:.1f}%")
     mcard(c3,"Variance – Residual",f"{np.var(resid_trainval)/vo*100:.1f}%")
 
-    # ── GPH: Trend ────────────────────────────────────────────
-    sec("📐 Karakteristik Komponen Trend – GPH")
-    with st.spinner("Menghitung GPH..."): d_gph=fdGPH(trend_trainval, bw=0.5)
-    if d_gph<0:     mc,ms="Anti-persistent","d < 0"
-    elif d_gph<0.5: mc,ms="Long Memory – Stasioner","0 < d < 0.5"
-    elif d_gph<1.0: mc,ms="Long Memory – Non-Stasioner","0.5 ≤ d < 1"
-    else:           mc,ms="Non-Stasioner Kuat","d ≥ 1"
-    c1,c2=st.columns(2)
-    mcard(c1,"GPH d estimate",f"{d_gph:.4f}"); mcard(c2,"Memory Class",mc,ms)
-    arah="meningkat" if trend_trainval[-1]>trend_trainval[0] else "menurun"
-    narasi(f"Tren secara umum **{arah}** (rentang **{trend_trainval.max()-trend_trainval.min():.4f}°C**). "
-           f"GPH d = {d_gph:.4f} → {mc} ({ms}).")
+    # ── GPH: data asli y_trainval (bukan komponen trend) ──────
+    sec("📐 Karakteristik Data SST – GPH")
+    with st.spinner("Menghitung GPH..."):
+        d_gph = fdGPH(y_trainval, bw=0.5)   # ← data asli trainval
 
-    # ── Spektral: Seasonal ────────────────────────────────────
-    sec("📈 Karakteristik Komponen Musiman – Spektral")
-    per_sp,Th,Tt,mus,pg=fungsi_spektral(y_trainval)
-    c1,c2,c3=st.columns(3)
-    mcard(c1,"Dominant Period",f"{per_sp} hari")
-    mcard(c2,"T-hitung",f"{Th:.5f}"); mcard(c3,"T-tabel",f"{Tt:.5f}")
-    badge=('<span class="badge-ok">✓ Musiman Terdeteksi</span>' if mus
-           else '<span class="badge-err">✗ Tidak Musiman</span>')
-    st.markdown(f"**Kesimpulan:** {badge}",unsafe_allow_html=True)
+    if d_gph < 0:    mc, ms = "Anti-persistent",             "d < 0"
+    elif d_gph < 0.5:mc, ms = "Long Memory – Stasioner",     "0 < d < 0.5"
+    elif d_gph < 1.0:mc, ms = "Long Memory – Non-Stasioner", "0.5 ≤ d < 1"
+    else:            mc, ms = "Non-Stasioner Kuat",           "d ≥ 1"
 
-    fig,ax=plt.subplots(figsize=(14,3))
-    ax.plot(pg,color=PAL["season"],lw=1.2)
-    ax.fill_between(range(len(pg)),pg,alpha=.13,color=PAL["season"])
-    ax.axvline(np.argmax(pg),color="#f87171",lw=1.5,ls="--",label=f"Peak @ idx={np.argmax(pg)}")
-    ax.set_title("Periodogram – Komponen Musiman")
+    c1, c2 = st.columns(2)
+    mcard(c1, "GPH d estimate", f"{d_gph:.4f}")
+    mcard(c2, "Memory Class",   mc, ms)
+
+    # Plot: time series y_trainval + bar d estimate
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+
+    # Kiri: plot SST trainval
+    axes[0].plot(y_trainval, color=PAL["actual"], lw=1.3, alpha=.85)
+    axes[0].fill_between(range(len(y_trainval)), y_trainval,
+                         alpha=.10, color=PAL["actual"])
+    axes[0].set_title("Data SST Train+Val\n(input GPH analysis)")
+    axes[0].set_ylabel("SST (°C)"); axes[0].set_xlabel("Index")
+    axes[0].grid(True, lw=.4)
+
+    # Kanan: bar chart d estimate
+    bar_col_map = {
+        "Anti-persistent":              "#38bdf8",
+        "Long Memory – Stasioner":      "#34d399",
+        "Long Memory – Non-Stasioner":  "#fbbf24",
+        "Non-Stasioner Kuat":           "#f87171",
+    }
+    bcolor = bar_col_map.get(mc, "#94a3b8")
+    axes[1].barh(["GPH d"], [d_gph], color=bcolor, alpha=.85, height=0.4)
+    axes[1].axvline(0,    color="#64748b", lw=1.0, ls="--", alpha=.6)
+    axes[1].axvline(0.5,  color="#fbbf24", lw=1.2, ls="--", alpha=.8,
+                    label="d=0.5 (batas stasioner)")
+    axes[1].axvline(1.0,  color="#f87171", lw=1.2, ls="--", alpha=.8,
+                    label="d=1.0 (non-stasioner)")
+    axes[1].set_xlim(-0.3, max(1.5, d_gph + 0.4))
+    axes[1].set_title(f"GPH Estimate: d = {d_gph:.4f}\n{mc}  ({ms})")
+    axes[1].set_xlabel("d value")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, lw=.4, axis="x")
+    axes[1].text(d_gph + 0.04, 0, f"d = {d_gph:.4f}",
+                 va="center", fontsize=10, color=bcolor, fontweight="bold")
+
+    fig.suptitle("Karakteristik Data SST – GPH (Geweke-Porter-Hudak)", fontsize=11)
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True); plt.close(fig)
+
+    # Narasi mengacu ke data asli, bukan komponen trend
+    narasi(f"Analisis GPH pada **data SST Train+Val** ({len(y_trainval):,} titik). "
+           f"Nilai d = **{d_gph:.4f}** → **{mc}** ({ms}). "
+           f"Rentang SST: **{y_trainval.min():.4f} – {y_trainval.max():.4f}°C**, "
+           f"rata-rata **{y_trainval.mean():.4f}°C**.")
+
+    # ── Spektral: data asli y_trainval ────────────────────────
+    sec("📈 Karakteristik Data SST – Spektral")
+    per_sp, Th, Tt, mus, pg = fungsi_spektral(y_trainval)   # ← data asli trainval
+    c1, c2, c3 = st.columns(3)
+    mcard(c1, "Dominant Period", f"{per_sp} hari")
+    mcard(c2, "T-hitung",        f"{Th:.5f}")
+    mcard(c3, "T-tabel",         f"{Tt:.5f}")
+    badge = ('<span class="badge-ok">✓ Musiman Terdeteksi</span>' if mus
+             else '<span class="badge-err">✗ Tidak Musiman</span>')
+    st.markdown(f"**Kesimpulan:** {badge}", unsafe_allow_html=True)
+
+    fig, ax = plt.subplots(figsize=(14, 3))
+    ax.plot(pg, color=PAL["season"], lw=1.2)
+    ax.fill_between(range(len(pg)), pg, alpha=.13, color=PAL["season"])
+    ax.axvline(np.argmax(pg), color="#f87171", lw=1.5, ls="--",
+               label=f"Peak @ idx={np.argmax(pg)}")
+    ax.set_title("Periodogram – Data SST Train+Val")
     ax.set_xlabel("Frequency Index"); ax.set_ylabel("Power")
-    ax.legend(); ax.grid(True,lw=.4)
-    st.pyplot(fig,use_container_width=True); plt.close(fig)
-    narasi(f"Periode dominan **{per_sp} hari**, amplitudo **{season_trainval.max()-season_trainval.min():.4f}°C**. "
-           f"{'Pola musiman signifikan terdeteksi' if mus else 'Tidak ada pola musiman signifikan'}.")
+    ax.legend(); ax.grid(True, lw=.4)
+    st.pyplot(fig, use_container_width=True); plt.close(fig)
+
+    narasi(f"Analisis spektral pada **data SST Train+Val** ({len(y_trainval):,} titik). "
+           f"Periode dominan **{per_sp} hari**. "
+           f"{'Pola musiman signifikan terdeteksi (T-hitung > T-tabel).' if mus else 'Tidak ada pola musiman signifikan.'}")
 
 # ══════ TAB 2: TRAINING ═══════════════════════════════════════
 with t2:
-    # ── Mode selector ─────────────────────────────────────────
     mode = st.radio("Mode", ["⬆️ Upload Model (.pt) dari Colab", "🏋️ Train dari Awal"],
                     horizontal=True)
 
@@ -452,7 +491,6 @@ with t2:
         with col1:
             st.markdown("#### 🔵 Trend Model (.pt)")
             up_t = st.file_uploader("Upload trend_model.pt", type=["pt"], key="up_trend")
-            # simpan bytes ke session_state supaya tidak hilang saat rerun
             if up_t is not None:
                 st.session_state["bytes_trend"] = up_t.read()
             if "bytes_trend" in st.session_state:
@@ -466,7 +504,6 @@ with t2:
                 st.success("✅ season_model.pt tersimpan")
 
         if "bytes_trend" in st.session_state and "bytes_season" in st.session_state:
-            # Auto-load begitu kedua file tersedia — tidak pakai button agar tidak rerun
             import io
             if "trained" not in st.session_state:
                 try:
@@ -540,19 +577,16 @@ with t3:
     season_val_s  =st.session_state["season_val_s"]
 
     with st.spinner("Menghitung prediksi…"):
-        # ── Train & Val: batch predict (teacher forcing) ──────
         tp_tr=sc_t.inverse_transform(predict_model(TM,Xtt).reshape(-1,1)).flatten()
         tp_vl=sc_t.inverse_transform(predict_model(TM,Xvt).reshape(-1,1)).flatten()
         sp_tr=sc_s.inverse_transform(predict_model(SM,Xts).reshape(-1,1)).flatten()
         sp_vl=sc_s.inverse_transform(predict_model(SM,Xvs).reshape(-1,1)).flatten()
 
-        # ── Test Trend: recursive dari window terakhir trainval ──
         t_full_s=np.concatenate([trend_train_s, trend_val_s])
         window_t=t_full_s[-lookback:]
         tp_te=sc_t.inverse_transform(
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
-        # ── Test Seasonal: sliding window shift 1 periode + tile ─
         s_full_s=np.concatenate([season_train_s,season_val_s])
         s_tiled =np.concatenate([s_full_s, s_full_s[-periode:]])
         sp_te_s=[]
@@ -569,7 +603,6 @@ with t3:
 
     h_tr=tp_tr+sp_tr; h_vl=tp_vl+sp_vl; h_te=tp_te+sp_te
 
-    # Actual alignment
     y_tr_true=y_full[lookback:n_train]
     y_vl_true=y_full[n_train:n_train+n_val]
     y_te_true=y_full[n_train+n_val:]
@@ -672,7 +705,6 @@ with t5:
     TM=st.session_state["TM"]; SM=st.session_state["SM"]
     sc_t=st.session_state["sc_t"]; sc_s=st.session_state["sc_s"]
 
-    # ── Kontrol panjang forecast ───────────────────────────────
     ca_ctrl, cb_ctrl = st.columns([2,3])
     with ca_ctrl:
         STEPS = st.slider("📅 Jumlah hari forecast", min_value=7, max_value=365,
@@ -687,7 +719,6 @@ with t5:
     freq_g=pd.infer_freq(dates[:50]) or "D"
     fut_dates=pd.date_range(dates[-1],periods=STEPS+1,freq=freq_g)[1:]
 
-    # ── Cache STL full data — hitung sekali, simpan ke session_state ──
     if "stl_full_tf" not in st.session_state:
         with st.spinner("Menghitung STL full data…"):
             from statsmodels.tsa.seasonal import STL as _STL
@@ -699,7 +730,6 @@ with t5:
     tf_full_s=st.session_state["stl_full_tf"]
     sf_full_s=st.session_state["stl_full_sf"]
 
-    # ── Forecast — hitung ulang hanya kalau STEPS berubah ─────────────
     if st.session_state.get("fc_steps") != STEPS:
         with st.spinner(f"Menghitung forecast {STEPS} hari…"):
             window_t_fc=tf_full_s[-lookback:]
@@ -734,7 +764,6 @@ with t5:
     tight_ylim(ax,[y_full[-tail_days:],hf]); ax.legend(); ax.grid(True,lw=.4)
     st.pyplot(fig,use_container_width=True); plt.close(fig)
 
-    # Metric ringkas
     m1,m2,m3=st.columns(3)
     mcard(m1,"Min Forecast",f"{hf.min():.4f} °C")
     mcard(m2,"Max Forecast",f"{hf.max():.4f} °C")
