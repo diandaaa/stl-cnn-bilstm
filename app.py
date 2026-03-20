@@ -263,6 +263,27 @@ with st.sidebar:
 # ═══════════════════════════════════════════════════════════════
 st.markdown("# 🌊 SST Time Series Analysis Dashboard")
 st.markdown("*Hybrid CNN-BiLSTM + STL · Sea Surface Temperature Forecasting*")
+st.markdown("""
+<div style="
+    background: linear-gradient(90deg, #1e3a5f, #0e1525);
+    border: 1px solid #2d3a56;
+    border-left: 4px solid #38bdf8;
+    border-radius: 8px;
+    padding: 0.55rem 1.1rem;
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+">
+    <span style="font-family:'Space Mono',monospace; color:#38bdf8; font-size:.85rem; font-weight:700;">
+        🎓 S1 Statistika FMIPA UNPAD
+    </span>
+    <span style="color:#64748b;">|</span>
+    <span style="font-family:'DM Sans',sans-serif; color:#cbd5e1; font-size:.85rem; font-weight:600;">
+        👤 Dianda Destin
+    </span>
+</div>
+""", unsafe_allow_html=True)
 
 if not run_btn:
     st.info("👈 Atur parameter di sidebar, lalu klik **▶ Run Analysis**.")
