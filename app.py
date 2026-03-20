@@ -316,7 +316,9 @@ df=df_raw.copy()
 df[date_col]=pd.to_datetime(df[date_col],dayfirst=False,infer_datetime_format=True)
 df=df.sort_values(date_col).set_index(date_col)
 y_full=df[sst_col].values.astype(float); dates=df.index; n=len(y_full)
-n_train=int(n*train_r); n_val=int(n*val_r); n_test=n-n_train-n_val
+n_val   = int(n * VAL_RATIO)
+n_test  = int(n * VAL_RATIO)
+n_train = n - n_val - n_test
 if n_test<=0: st.error("Test set kosong."); st.stop()
 y_trainval=y_full[:n_train+n_val]
 
