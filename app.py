@@ -841,129 +841,44 @@ with t5:
     sf_s=st.session_state["fc_sf_s"]; sf=st.session_state["fc_sf"]
     hf =st.session_state["fc_hf"]
 
-    # ── HITUNG STATUS MHW (Hobday et al. 2016) ───────────────
-    # Threshold = persentil ke-90 dari SELURUH data historis (y_full)
-    # karena future forecast dilakukan setelah semua data tersedia
-    anomali_fc  = hf - MEAN_SST_FULL
-    is_above_p90= hf >= THRESHOLD_MHW_FULL
-    is_mhw_fc   = deteksi_mhw_berturut(hf, THRESHOLD_MHW_FULL, min_days=5)
-    status_fc   = [klasifikasi_status_mhw(hf[i], THRESHOLD_MHW_FULL, is_mhw_fc[i])
-                   for i in range(STEPS)]
-    n_normal    = sum(1 for s in status_fc if "Normal"   in s)
-    n_waspada   = sum(1 for s in status_fc if "Waspada"  in s)
-    n_kritis    = sum(1 for s in status_fc if "MHW"      in s)
-    max_sst_fc  = hf.max()
-    tgl_kritis  = [str(fut_dates[i].date()) for i,s in enumerate(status_fc) if "MHW"     in s]
-    tgl_waspada = [str(fut_dates[i].date()) for i,s in enumerate(status_fc) if "Waspada" in s]
+    # ── HITUNG STATISTIK FORECAST ────────────────────────────
+    anomali_fc   = hf - MEAN_SST_FULL
+    is_above_p90 = hf >= THRESHOLD_MHW_FULL
+    is_mhw_fc    = deteksi_mhw_berturut(hf, THRESHOLD_MHW_FULL, min_days=5)
+    n_above_p90  = int(is_above_p90.sum())
+    n_mhw        = int(is_mhw_fc.sum())
 
     sec(f"🔮 Forecast {STEPS} Hari ke Depan")
 
-    # Plot dengan garis ambang batas persentil ke-90
+    # Plot utama — fokus pada nilai SPL prediksi
     fig,ax=plt.subplots(figsize=(14,4))
     ax.plot(dates[-tail_days:],y_full[-tail_days:],color=PAL["actual"],lw=1.8,
-            alpha=0.6,label=f"Actual ({tail_days} hari terakhir)",zorder=2)
+            alpha=0.6,label=f"Aktual ({tail_days} hari terakhir)",zorder=2)
     ax.plot(fut_dates,hf,color=PAL["future"],lw=2.2,
             label=f"Forecast ({STEPS} hari)",marker="o",markersize=4,zorder=5)
-    ax.axhline(THRESHOLD_MHW_FULL, color=PAL["warn"], lw=1.5, ls="--", alpha=.85,
-               label=f"Ambang MHW P90 = {THRESHOLD_MHW_FULL:.3f}°C")
-    ax.axhline(MEAN_SST_FULL,      color="#64748b",   lw=1.0, ls=":",  alpha=.7,
+    ax.axhline(MEAN_SST_FULL, color="#64748b", lw=1.0, ls=":", alpha=.7,
                label=f"Rata-rata historis = {MEAN_SST_FULL:.3f}°C")
     ax.axvline(dates[-1],color="#64748b",lw=1,ls=":",alpha=.7,label="Batas data")
-
-    # Warnai area forecast sesuai status MHW
-    for i in range(STEPS):
-        c = PAL["crit"] if is_mhw_fc[i] else PAL["warn"] if is_above_p90[i] else PAL["normal"]
-        ax.axvspan(fut_dates[i], fut_dates[min(i+1, STEPS-1)], alpha=0.07, color=c)
-
-    ax.set_title(f"Future Forecast – {STEPS} Hari ke Depan + Deteksi Marine Heatwave")
+    ax.set_title(f"Prediksi SPL – {STEPS} Hari ke Depan")
     ax.set_ylabel("SST (°C)")
-    tight_ylim(ax,[y_full[-tail_days:],hf,[THRESHOLD_MHW_FULL]])
-    ax.legend(fontsize=7); ax.grid(True,lw=.4)
+    tight_ylim(ax,[y_full[-tail_days:],hf])
+    ax.legend(fontsize=8); ax.grid(True,lw=.4)
     st.pyplot(fig,use_container_width=True); plt.close(fig)
 
-    # ── METRIC CARDS EKOLOGIS ────────────────────────────────
-    sec("🌡️ Status Marine Heatwave (MHW) – Ringkasan")
-    m1,m2,m3,m4 = st.columns(4)
-    mcard(m1, "Threshold P90",    f"{THRESHOLD_MHW_FULL:.3f}°C", "Persentil ke-90 historis")
-    mcard(m2, "Hari Normal 🟢",   f"{n_normal} hari",   f"{n_normal/STEPS*100:.0f}% periode")
-    mcard(m3, "Hari Waspada 🟡",  f"{n_waspada} hari",  f"{n_waspada/STEPS*100:.0f}% periode")
-    mcard(m4, "Hari MHW Kritis 🔴", f"{n_kritis} hari", f"{n_kritis/STEPS*100:.0f}% periode")
-
-    # ── ALERT NARASI OTOMATIS ────────────────────────────────
-    if n_kritis > 0:
-        alert_box("crit",
-            f"⚠️ <b>MARINE HEATWAVE TERDETEKSI:</b> Terdeteksi <b>{n_kritis} hari</b> yang memenuhi "
-            f"kriteria MHW (SPL ≥ persentil ke-90 = {THRESHOLD_MHW_FULL:.3f}°C selama ≥5 hari berturut-turut). "
-            f"SPL maksimum prediksi: <b>{max_sst_fc:.4f}°C</b>. "
-            f"Risiko tekanan termal pada ekosistem terumbu karang tinggi — "
-            f"disarankan aktivasi protokol pemantauan konservasi segera. "
-            f"MHW pertama dimulai: <b>{tgl_kritis[0] if tgl_kritis else '-'}</b>.")
-    elif n_waspada > 0:
-        alert_box("warn",
-            f"⚡ <b>ZONA WASPADA MHW:</b> Terdeteksi <b>{n_waspada} hari</b> dengan SPL ≥ persentil ke-90 "
-            f"({THRESHOLD_MHW_FULL:.3f}°C), namun belum memenuhi durasi minimal 5 hari berturut-turut untuk "
-            f"diklasifikasikan sebagai MHW penuh. Pemantauan berkala ekosistem terumbu karang disarankan. "
-            f"Zona waspada mulai: <b>{tgl_waspada[0] if tgl_waspada else '-'}</b>.")
-    else:
-        alert_box("normal",
-            f"✅ <b>KONDISI NORMAL:</b> Seluruh {STEPS} hari periode forecast berada di bawah "
-            f"ambang MHW (persentil ke-90 = {THRESHOLD_MHW_FULL:.3f}°C). "
-            f"Tidak ada indikasi Marine Heatwave pada periode prediksi. "
-            f"Kondisi perairan diprediksi aman untuk ekosistem terumbu karang.")
-
-    ref_box(
-        "Deteksi Marine Heatwave menggunakan metode <b>Hobday et al. (2016)</b>: MHW didefinisikan "
-        "ketika SPL ≥ persentil ke-90 dari baseline historis selama ≥5 hari berturut-turut. "
-        "Metode ini digunakan di Indonesia antara lain pada penelitian MHW di perairan Bali dan Lombok/Sulawesi. "
-        "Referensi: Hobday, A.J., et al. (2016). <i>Progress in Oceanography</i>, 141, 227–238. "
-        "<a href='https://doi.org/10.1016/j.pocean.2015.12.014' target='_blank'>doi.org/10.1016/j.pocean.2015.12.014</a>"
-    )
-
-    # ── GRAFIK DISTRIBUSI HISTORIS + THRESHOLD ───────────────
-    sec("📊 Distribusi SPL Historis & Ambang MHW")
-    fig2, axes2 = plt.subplots(1, 2, figsize=(14, 3.5))
-
-    # Kiri: histogram distribusi + threshold
-    axes2[0].hist(y_full, bins=60, color=PAL["actual"], alpha=0.7, edgecolor="none")
-    axes2[0].axvline(THRESHOLD_MHW_FULL, color=PAL["warn"], lw=2.0, ls="--",
-                     label=f"P90 = {THRESHOLD_MHW_FULL:.3f}°C")
-    axes2[0].axvline(MEAN_SST_FULL,      color="#64748b",   lw=1.5, ls=":",
-                     label=f"Mean = {MEAN_SST_FULL:.3f}°C")
-    # Tandai forecast range
-    axes2[0].axvspan(hf.min(), hf.max(), alpha=0.15, color=PAL["future"],
-                     label=f"Range forecast ({hf.min():.2f}–{hf.max():.2f}°C)")
-    axes2[0].set_title("Distribusi SPL Historis + Range Forecast")
-    axes2[0].set_xlabel("SST (°C)"); axes2[0].set_ylabel("Frekuensi")
-    axes2[0].legend(fontsize=8); axes2[0].grid(True, lw=.4)
-
-    # Kanan: bar status per hari forecast
-    bar_colors2 = [PAL["crit"] if is_mhw_fc[i] else PAL["warn"] if is_above_p90[i]
-                   else PAL["normal"] for i in range(STEPS)]
-    axes2[1].bar(range(STEPS), hf - MEAN_SST_FULL, color=bar_colors2, alpha=0.85, width=0.8)
-    axes2[1].axhline(THRESHOLD_MHW_FULL - MEAN_SST_FULL, color=PAL["warn"], lw=1.5, ls="--",
-                     label=f"Ambang P90 (+{THRESHOLD_MHW_FULL-MEAN_SST_FULL:.3f}°C dari mean)")
-    axes2[1].axhline(0, color="#64748b", lw=0.8, ls="-", alpha=.5)
-    axes2[1].set_title("Anomali SPL Forecast terhadap Rata-rata Historis")
-    axes2[1].set_xlabel("Hari ke-"); axes2[1].set_ylabel("Anomali vs Mean (°C)")
-    axes2[1].legend(fontsize=8); axes2[1].grid(True, lw=.4, axis="y")
-
-    # Anotasi max
-    idx_max = int(np.argmax(hf))
-    axes2[1].annotate(f"{hf[idx_max]:.3f}°C",
-                      xy=(idx_max, hf[idx_max]-MEAN_SST_FULL),
-                      xytext=(idx_max, hf[idx_max]-MEAN_SST_FULL+0.03),
-                      fontsize=8, color=PAL["future"], ha="center", fontweight="bold")
-    plt.tight_layout()
-    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+    # ── METRIC CARDS UTAMA ───────────────────────────────────
+    m1,m2,m3 = st.columns(3)
+    mcard(m1, "Min Forecast",  f"{hf.min():.4f} °C")
+    mcard(m2, "Max Forecast",  f"{hf.max():.4f} °C")
+    mcard(m3, "Mean Forecast", f"{hf.mean():.4f} °C")
 
     narasi(
-        f"Threshold MHW = persentil ke-90 dari {n:,} hari data historis = **{THRESHOLD_MHW_FULL:.3f}°C**. "
-        f"Batang **hijau** = normal (< P90), **kuning** = waspada (≥ P90, <5 hari berturut), "
-        f"**merah** = MHW kritis (≥ P90 selama ≥5 hari berturut-turut, Hobday et al. 2016)."
+        f"Proyeksi SPL untuk **{STEPS} hari** ke depan berada pada rentang "
+        f"**{hf.min():.4f}–{hf.max():.4f}°C** dengan rata-rata **{hf.mean():.4f}°C**. "
+        f"Rata-rata SPL historis = **{MEAN_SST_FULL:.4f}°C**."
     )
 
     # ── TABEL LENGKAP ────────────────────────────────────────
-    sec("📋 Tabel – Sebelum & Sesudah Denormalisasi + Status MHW")
+    sec("📋 Tabel – Sebelum & Sesudah Denormalisasi")
     ca,cb=st.columns(2)
     with ca:
         st.markdown("**Sebelum Denormalisasi**")
@@ -972,29 +887,86 @@ with t5:
             .style.format({"Trend (norm)":"{:.5f}","Seasonal (norm)":"{:.5f}"}),
             use_container_width=True)
     with cb:
-        st.markdown("**Setelah Denormalisasi + Status MHW**")
+        st.markdown("**Setelah Denormalisasi**")
         df_out=pd.DataFrame({
             "Periode":range(1,STEPS+1),
             "Tanggal":fut_dates,
             "Trend (°C)":np.round(tf,4),
             "Seasonal (°C)":np.round(sf,4),
             "SST Pred (°C)":np.round(hf,4),
-            "Anomali vs Mean":np.round(anomali_fc,4),
-            "≥P90":["Ya" if v else "Tidak" for v in is_above_p90],
-            "Status MHW":status_fc,
         })
         st.dataframe(df_out.style
             .format({"Trend (°C)":"{:.4f}","Seasonal (°C)":"{:.4f}",
-                     "SST Pred (°C)":"{:.4f}","Anomali vs Mean":"{:+.4f}"})
+                     "SST Pred (°C)":"{:.4f}"})
             .background_gradient(subset=["SST Pred (°C)"],cmap="RdYlBu_r"),
             use_container_width=True)
 
-    st.download_button("⬇ Download Future CSV + Status MHW",
-        df_out.to_csv(index=False).encode(),"future_forecast_mhw.csv","text/csv")
+    # ── INFORMASI TAMBAHAN: ANOMALI TERMAL (EXPANDER) ────────
+    with st.expander("ℹ️ Informasi Tambahan – Anomali Termal & Potensi MHW"):
+        st.markdown(
+            f"Sebagai informasi tambahan, berikut posisi prediksi SPL terhadap "
+            f"persentil ke-90 data historis (**{THRESHOLD_MHW_FULL:.3f}°C**) yang merupakan "
+            f"ambang batas *Marine Heatwave* (MHW) menurut Hobday et al. (2016)."
+        )
 
-    narasi(
-        f"Proyeksi SST {STEPS} hari: **{hf.min():.4f}–{hf.max():.4f}°C**, "
-        f"rata-rata **{hf.mean():.4f}°C**. "
-        f"Threshold MHW P90 = **{THRESHOLD_MHW_FULL:.3f}°C** · "
-        f"🟢 Normal: {n_normal} hari · 🟡 Waspada: {n_waspada} hari · 🔴 MHW Kritis: {n_kritis} hari."
-    )
+        # Plot anomali di dalam expander
+        fig3, axes3 = plt.subplots(1, 2, figsize=(14, 3.5))
+
+        # Kiri: histogram distribusi + threshold + range forecast
+        axes3[0].hist(y_full, bins=60, color=PAL["actual"], alpha=0.7, edgecolor="none")
+        axes3[0].axvline(THRESHOLD_MHW_FULL, color=PAL["warn"], lw=2.0, ls="--",
+                         label=f"P90 = {THRESHOLD_MHW_FULL:.3f}°C")
+        axes3[0].axvline(MEAN_SST_FULL, color="#64748b", lw=1.5, ls=":",
+                         label=f"Mean = {MEAN_SST_FULL:.3f}°C")
+        axes3[0].axvspan(hf.min(), hf.max(), alpha=0.15, color=PAL["future"],
+                         label=f"Range forecast ({hf.min():.2f}–{hf.max():.2f}°C)")
+        axes3[0].set_title("Distribusi SPL Historis + Range Forecast")
+        axes3[0].set_xlabel("SST (°C)"); axes3[0].set_ylabel("Frekuensi")
+        axes3[0].legend(fontsize=8); axes3[0].grid(True, lw=.4)
+
+        # Kanan: bar anomali per hari
+        bar_colors3 = [PAL["crit"] if is_mhw_fc[i] else PAL["warn"] if is_above_p90[i]
+                       else PAL["normal"] for i in range(STEPS)]
+        axes3[1].bar(range(STEPS), anomali_fc, color=bar_colors3, alpha=0.85, width=0.8)
+        axes3[1].axhline(THRESHOLD_MHW_FULL - MEAN_SST_FULL, color=PAL["warn"], lw=1.5, ls="--",
+                         label=f"Ambang P90 (+{THRESHOLD_MHW_FULL-MEAN_SST_FULL:.3f}°C dari mean)")
+        axes3[1].axhline(0, color="#64748b", lw=0.8, ls="-", alpha=.5)
+        idx_max = int(np.argmax(hf))
+        axes3[1].annotate(f"{hf[idx_max]:.3f}°C",
+                          xy=(idx_max, anomali_fc[idx_max]),
+                          xytext=(idx_max, anomali_fc[idx_max]+0.03),
+                          fontsize=8, color=PAL["future"], ha="center", fontweight="bold")
+        axes3[1].set_title("Anomali SPL Forecast terhadap Rata-rata Historis")
+        axes3[1].set_xlabel("Hari ke-"); axes3[1].set_ylabel("Anomali vs Mean (°C)")
+        axes3[1].legend(fontsize=8); axes3[1].grid(True, lw=.4, axis="y")
+        plt.tight_layout()
+        st.pyplot(fig3, use_container_width=True); plt.close(fig3)
+
+        # Tabel anomali + status
+        df_mhw = pd.DataFrame({
+            "Periode":range(1,STEPS+1),
+            "Tanggal":fut_dates,
+            "SST Pred (°C)":np.round(hf,4),
+            "Anomali vs Mean":np.round(anomali_fc,4),
+            "≥P90":["Ya" if v else "Tidak" for v in is_above_p90],
+            "Status MHW":[klasifikasi_status_mhw(hf[i], THRESHOLD_MHW_FULL, is_mhw_fc[i])
+                          for i in range(STEPS)],
+        })
+        st.dataframe(df_mhw.style
+            .format({"SST Pred (°C)":"{:.4f}","Anomali vs Mean":"{:+.4f}"})
+            .background_gradient(subset=["SST Pred (°C)"],cmap="RdYlBu_r"),
+            use_container_width=True)
+
+        c1,c2,c3 = st.columns(3)
+        mcard(c1,"P90 Threshold", f"{THRESHOLD_MHW_FULL:.3f}°C","Persentil ke-90 historis")
+        mcard(c2,"Hari ≥ P90",    f"{n_above_p90} hari",        f"{n_above_p90/STEPS*100:.0f}% periode")
+        mcard(c3,"Hari MHW",      f"{n_mhw} hari",              "≥P90 selama ≥5 hari berturut")
+
+        ref_box(
+            "Ambang MHW = persentil ke-90 dari baseline historis, berlangsung ≥5 hari berturut-turut. "
+            "Hobday, A.J., et al. (2016). <i>Progress in Oceanography</i>, 141, 227–238. "
+            "<a href='https://doi.org/10.1016/j.pocean.2015.12.014' target='_blank'>doi.org/10.1016/j.pocean.2015.12.014</a>"
+        )
+
+    st.download_button("⬇ Download Future CSV",
+        df_out.to_csv(index=False).encode(),"future_forecast.csv","text/csv")
