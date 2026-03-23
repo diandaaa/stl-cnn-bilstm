@@ -21,6 +21,14 @@ h1,h2,h3{font-family:'Space Mono',monospace;}
 .badge-err{background:#450a0a;color:#f87171;padding:2px 9px;border-radius:999px;font-size:.76rem;}
 .narasi{background:#111827;border:1px solid #1e3a5f;border-radius:8px;
   padding:.75rem 1rem;color:#cbd5e1;font-size:.86rem;line-height:1.6;margin:.5rem 0 .9rem;}
+.alert-normal{background:#052e16;border:1px solid #166534;border-radius:8px;
+  padding:.75rem 1rem;color:#86efac;font-size:.86rem;line-height:1.6;margin:.5rem 0 .9rem;}
+.alert-warn{background:#422006;border:1px solid #92400e;border-radius:8px;
+  padding:.75rem 1rem;color:#fde68a;font-size:.86rem;line-height:1.6;margin:.5rem 0 .9rem;}
+.alert-crit{background:#450a0a;border:1px solid #991b1b;border-radius:8px;
+  padding:.75rem 1rem;color:#fca5a5;font-size:.86rem;line-height:1.6;margin:.5rem 0 .9rem;}
+.ref-box{background:#0f172a;border:1px solid #2d3a56;border-radius:8px;
+  padding:.6rem 1rem;color:#94a3b8;font-size:.78rem;line-height:1.7;margin:.3rem 0 .8rem;}
 </style>""", unsafe_allow_html=True)
 
 plt.rcParams.update({
@@ -31,10 +39,15 @@ plt.rcParams.update({
     "font.family":"monospace","axes.titlecolor":"#e2e8f0","axes.titlesize":10,"axes.titleweight":"bold",
 })
 PAL=dict(actual="#38bdf8",train="#34d399",val="#fbbf24",test="#f87171",
-         trend="#a78bfa",season="#fb923c",resid="#94a3b8",future="#f0abfc")
+         trend="#a78bfa",season="#fb923c",resid="#94a3b8",future="#f0abfc",
+         normal="#34d399",warn="#fbbf24",crit="#f87171")
 
 def sec(t):    st.markdown(f'<div class="sec-title">{t}</div>',unsafe_allow_html=True)
 def narasi(t): st.markdown(f'<div class="narasi">💡 {t}</div>',unsafe_allow_html=True)
+def alert_box(level, t):
+    css = {"normal":"alert-normal","warn":"alert-warn","crit":"alert-crit"}[level]
+    st.markdown(f'<div class="{css}">{t}</div>', unsafe_allow_html=True)
+def ref_box(t): st.markdown(f'<div class="ref-box">📚 <b>Referensi:</b> {t}</div>', unsafe_allow_html=True)
 def mcard(col,lbl,val,sub=""):
     col.markdown(f'<div class="metric-card"><div class="lbl">{lbl}</div>'
                  f'<div class="val">{val}</div><div class="sub">{sub}</div></div>',
@@ -184,10 +197,6 @@ def fungsi_spektral(x):
     return per,Th,Tt,Th>Tt,pg
 
 def fdGPH(x, bw=0.5):
-    """
-    GPH (Geweke-Porter-Hudak) estimator untuk fraktal differencing d.
-    Input x bisa data apapun — trainval SST asli, bukan komponen STL.
-    """
     import statsmodels.api as sm
     x=np.asarray(x,dtype=float)-np.mean(x); n=len(x)
     m=int(np.floor(n**bw)); j=np.arange(1,m+1); lam=2*np.pi*j/n
@@ -204,6 +213,35 @@ def generate_random_sst(n=4071, seed=42):
     sst=np.clip(trend+seasonal+noise,27.38,30.67)
     return pd.DataFrame({"tgl":pd.date_range("2015-01-01",periods=n,freq="D").strftime("%-m/%-d/%Y"),
                          "sst":np.round(sst,5)})
+
+# ═══════════════════════════════════════════════════════════════
+# FUNGSI INTERPRETASI EKOLOGIS (BARU)
+# ═══════════════════════════════════════════════════════════════
+def hitung_mmm(y_full, dates):
+    """
+    Menghitung Maximum Monthly Mean (MMM) dari data historis.
+    MMM = nilai tertinggi dari 12 rata-rata bulanan (mengikuti standar NOAA CRW).
+    Referensi: NOAA Coral Reef Watch, https://coralreefwatch.noaa.gov/product/5km/methodology.php
+    """
+    s = pd.Series(y_full, index=dates)
+    monthly_mean = s.groupby(s.index.month).mean()
+    return monthly_mean.max()
+
+def klasifikasi_status(anomali):
+    """
+    Mengklasifikasikan status termal berdasarkan anomali SPL terhadap MMM.
+    Mengacu pada sistem NOAA Coral Reef Watch HotSpot:
+    - Normal   : anomali < 0 (di bawah MMM)
+    - Waspada  : 0 <= anomali < 1°C (zona HotSpot ungu NOAA CRW)
+    - Kritis   : anomali >= 1°C (ambang bleaching, Glynn & D'Croz 1990)
+    Referensi: https://www.aoml.noaa.gov/threats-to-coral/
+    """
+    if anomali >= 1.0:
+        return "🔴 Kritis"
+    elif anomali >= 0.0:
+        return "🟡 Waspada"
+    else:
+        return "🟢 Normal"
 
 # ═══════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -322,6 +360,9 @@ n_train = n - n_val - n_test
 if n_test<=0: st.error("Test set kosong."); st.stop()
 y_trainval=y_full[:n_train+n_val]
 
+# Hitung MMM dari data historis (untuk interpretasi ekologis)
+MMM = hitung_mmm(y_full, dates)
+
 # ── STL: fit pada trainval saja (no leakage) ──────────────────
 with st.spinner("Running STL decomposition..."):
     periode=fungsi_spektral(y_trainval)[0] if auto_period else manual_period
@@ -417,10 +458,9 @@ with t1:
     mcard(c2,"Variance – Seasonal",f"{(1-np.var(stl.observed-season_trainval)/vo)*100:.1f}%")
     mcard(c3,"Variance – Residual",f"{np.var(resid_trainval)/vo*100:.1f}%")
 
-    # ── GPH: data asli y_trainval (bukan komponen trend) ──────
     sec("📐 Karakteristik Data SST – GPH")
     with st.spinner("Menghitung GPH..."):
-        d_gph = fdGPH(y_trainval, bw=0.5)   # ← data asli trainval
+        d_gph = fdGPH(y_trainval, bw=0.5)
 
     if d_gph < 0:    mc, ms = "Anti-persistent",             "d < 0"
     elif d_gph < 0.5:mc, ms = "Long Memory – Stasioner",     "0 < d < 0.5"
@@ -431,18 +471,13 @@ with t1:
     mcard(c1, "GPH d estimate", f"{d_gph:.4f}")
     mcard(c2, "Memory Class",   mc, ms)
 
-    # Plot: time series y_trainval + bar d estimate
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-
-    # Kiri: plot SST trainval
     axes[0].plot(y_trainval, color=PAL["actual"], lw=1.3, alpha=.85)
-    axes[0].fill_between(range(len(y_trainval)), y_trainval,
-                         alpha=.10, color=PAL["actual"])
+    axes[0].fill_between(range(len(y_trainval)), y_trainval, alpha=.10, color=PAL["actual"])
     axes[0].set_title("Data SST Train+Val\n(input GPH analysis)")
     axes[0].set_ylabel("SST (°C)"); axes[0].set_xlabel("Index")
     axes[0].grid(True, lw=.4)
 
-    # Kanan: bar chart d estimate
     bar_col_map = {
         "Anti-persistent":              "#38bdf8",
         "Long Memory – Stasioner":      "#34d399",
@@ -452,31 +487,24 @@ with t1:
     bcolor = bar_col_map.get(mc, "#94a3b8")
     axes[1].barh(["GPH d"], [d_gph], color=bcolor, alpha=.85, height=0.4)
     axes[1].axvline(0,    color="#64748b", lw=1.0, ls="--", alpha=.6)
-    axes[1].axvline(0.5,  color="#fbbf24", lw=1.2, ls="--", alpha=.8,
-                    label="d=0.5 (batas stasioner)")
-    axes[1].axvline(1.0,  color="#f87171", lw=1.2, ls="--", alpha=.8,
-                    label="d=1.0 (non-stasioner)")
+    axes[1].axvline(0.5,  color="#fbbf24", lw=1.2, ls="--", alpha=.8, label="d=0.5 (batas stasioner)")
+    axes[1].axvline(1.0,  color="#f87171", lw=1.2, ls="--", alpha=.8, label="d=1.0 (non-stasioner)")
     axes[1].set_xlim(-0.3, max(1.5, d_gph + 0.4))
     axes[1].set_title(f"GPH Estimate: d = {d_gph:.4f}\n{mc}  ({ms})")
-    axes[1].set_xlabel("d value")
-    axes[1].legend(fontsize=8)
+    axes[1].set_xlabel("d value"); axes[1].legend(fontsize=8)
     axes[1].grid(True, lw=.4, axis="x")
-    axes[1].text(d_gph + 0.04, 0, f"d = {d_gph:.4f}",
-                 va="center", fontsize=10, color=bcolor, fontweight="bold")
-
+    axes[1].text(d_gph + 0.04, 0, f"d = {d_gph:.4f}", va="center", fontsize=10, color=bcolor, fontweight="bold")
     fig.suptitle("Karakteristik Data SST – GPH (Geweke-Porter-Hudak)", fontsize=11)
     plt.tight_layout()
     st.pyplot(fig, use_container_width=True); plt.close(fig)
 
-    # Narasi mengacu ke data asli, bukan komponen trend
     narasi(f"Analisis GPH pada **data SST Train+Val** ({len(y_trainval):,} titik). "
            f"Nilai d = **{d_gph:.4f}** → **{mc}** ({ms}). "
            f"Rentang SST: **{y_trainval.min():.4f} – {y_trainval.max():.4f}°C**, "
            f"rata-rata **{y_trainval.mean():.4f}°C**.")
 
-    # ── Spektral: data asli y_trainval ────────────────────────
     sec("📈 Karakteristik Data SST – Spektral")
-    per_sp, Th, Tt, mus, pg = fungsi_spektral(y_trainval)   # ← data asli trainval
+    per_sp, Th, Tt, mus, pg = fungsi_spektral(y_trainval)
     c1, c2, c3 = st.columns(3)
     mcard(c1, "Dominant Period", f"{per_sp} hari")
     mcard(c2, "T-hitung",        f"{Th:.5f}")
@@ -488,8 +516,7 @@ with t1:
     fig, ax = plt.subplots(figsize=(14, 3))
     ax.plot(pg, color=PAL["season"], lw=1.2)
     ax.fill_between(range(len(pg)), pg, alpha=.13, color=PAL["season"])
-    ax.axvline(np.argmax(pg), color="#f87171", lw=1.5, ls="--",
-               label=f"Peak @ idx={np.argmax(pg)}")
+    ax.axvline(np.argmax(pg), color="#f87171", lw=1.5, ls="--", label=f"Peak @ idx={np.argmax(pg)}")
     ax.set_title("Periodogram – Data SST Train+Val")
     ax.set_xlabel("Frequency Index"); ax.set_ylabel("Power")
     ax.legend(); ax.grid(True, lw=.4)
@@ -501,8 +528,7 @@ with t1:
 
 # ══════ TAB 2: TRAINING ═══════════════════════════════════════
 with t2:
-    mode = st.radio("Mode", ["⬆️ Upload Model (.pt) dari Colab", "🏋️ Train dari Awal"],
-                    horizontal=True)
+    mode = st.radio("Mode", ["⬆️ Upload Model (.pt) dari Colab", "🏋️ Train dari Awal"], horizontal=True)
 
     if mode == "⬆️ Upload Model (.pt) dari Colab":
         st.info("""
@@ -514,17 +540,13 @@ with t2:
         with col1:
             st.markdown("#### 🔵 Trend Model (.pt)")
             up_t = st.file_uploader("Upload trend_model.pt", type=["pt"], key="up_trend")
-            if up_t is not None:
-                st.session_state["bytes_trend"] = up_t.read()
-            if "bytes_trend" in st.session_state:
-                st.success("✅ trend_model.pt tersimpan")
+            if up_t is not None: st.session_state["bytes_trend"] = up_t.read()
+            if "bytes_trend" in st.session_state: st.success("✅ trend_model.pt tersimpan")
         with col2:
             st.markdown("#### 🟠 Seasonal Model (.pt)")
             up_s = st.file_uploader("Upload season_model.pt", type=["pt"], key="up_season")
-            if up_s is not None:
-                st.session_state["bytes_season"] = up_s.read()
-            if "bytes_season" in st.session_state:
-                st.success("✅ season_model.pt tersimpan")
+            if up_s is not None: st.session_state["bytes_season"] = up_s.read()
+            if "bytes_season" in st.session_state: st.success("✅ season_model.pt tersimpan")
 
         if "bytes_trend" in st.session_state and "bytes_season" in st.session_state:
             import io
@@ -532,10 +554,8 @@ with t2:
                 try:
                     TM = TrendModel(lookback, t_conv_f, t_kern, t_lstm, t_dense, t_drop)
                     SM = SeasonModel(lookback, s_conv_f, s_kern, s_lstm, s_dense)
-                    TM.load_state_dict(torch.load(
-                        io.BytesIO(st.session_state["bytes_trend"]), map_location="cpu"))
-                    SM.load_state_dict(torch.load(
-                        io.BytesIO(st.session_state["bytes_season"]), map_location="cpu"))
+                    TM.load_state_dict(torch.load(io.BytesIO(st.session_state["bytes_trend"]), map_location="cpu"))
+                    SM.load_state_dict(torch.load(io.BytesIO(st.session_state["bytes_season"]), map_location="cpu"))
                     TM.eval(); SM.eval()
                     st.session_state.update(dict(
                         trained=True, TM=TM, SM=SM, sc_t=sc_t, sc_s=sc_s,
@@ -544,12 +564,10 @@ with t2:
                     ))
                 except Exception as e:
                     st.error(f"❌ Gagal load model: {e}")
-                    st.warning("Pastikan parameter model (lookback, filters, units) sama dengan saat training di Colab.")
             if "trained" in st.session_state:
                 st.success("✅ Model berhasil dimuat! Buka tab 🎯 Forecast Results.")
         else:
             st.warning("Upload kedua file .pt untuk melanjutkan.")
-
     else:
         sec("🤖 Training CNN-BiLSTM")
         col1,col2=st.columns(2)
@@ -776,23 +794,112 @@ with t5:
     sf_s=st.session_state["fc_sf_s"]; sf=st.session_state["fc_sf"]
     hf =st.session_state["fc_hf"]
 
+    # ── HITUNG ANOMALI & STATUS EKOLOGIS ─────────────────────
+    anomali_fc = hf - MMM
+    status_fc  = [klasifikasi_status(a) for a in anomali_fc]
+    n_normal   = sum(1 for s in status_fc if "Normal"  in s)
+    n_waspada  = sum(1 for s in status_fc if "Waspada" in s)
+    n_kritis   = sum(1 for s in status_fc if "Kritis"  in s)
+    max_anomali = anomali_fc.max()
+    tgl_kritis  = [str(fut_dates[i].date()) for i,s in enumerate(status_fc) if "Kritis" in s]
+    tgl_waspada = [str(fut_dates[i].date()) for i,s in enumerate(status_fc) if "Waspada" in s]
+
     sec(f"🔮 Forecast {STEPS} Hari ke Depan")
+
+    # Plot dengan garis ambang batas
     fig,ax=plt.subplots(figsize=(14,4))
     ax.plot(dates[-tail_days:],y_full[-tail_days:],color=PAL["actual"],lw=1.8,
             alpha=0.6,label=f"Actual ({tail_days} hari terakhir)",zorder=2)
     ax.plot(fut_dates,hf,color=PAL["future"],lw=2.2,
             label=f"Forecast ({STEPS} hari)",marker="o",markersize=4,zorder=5)
+    ax.axhline(MMM,      color="#64748b", lw=1.2, ls=":",  alpha=.8,
+               label=f"MMM = {MMM:.2f}°C")
+    ax.axhline(MMM+1.0,  color=PAL["crit"], lw=1.5, ls="--", alpha=.85,
+               label=f"Ambang Kritis MMM+1°C = {MMM+1:.2f}°C")
+    ax.axhline(MMM,      color=PAL["warn"], lw=1.2, ls="--", alpha=.6,
+               label=f"Ambang Waspada = MMM = {MMM:.2f}°C")
     ax.axvline(dates[-1],color="#64748b",lw=1,ls=":",alpha=.7,label="Batas data")
-    ax.set_title(f"Future Forecast – {STEPS} Hari ke Depan"); ax.set_ylabel("SST (°C)")
-    tight_ylim(ax,[y_full[-tail_days:],hf]); ax.legend(); ax.grid(True,lw=.4)
+
+    # Warnai area forecast sesuai status
+    for i in range(STEPS):
+        anom = anomali_fc[i]
+        c = PAL["crit"] if anom >= 1.0 else PAL["warn"] if anom >= 0.0 else PAL["normal"]
+        ax.axvspan(fut_dates[i], fut_dates[min(i+1, STEPS-1)], alpha=0.07, color=c)
+
+    ax.set_title(f"Future Forecast – {STEPS} Hari ke Depan + Interpretasi Ekologis")
+    ax.set_ylabel("SST (°C)")
+    tight_ylim(ax,[y_full[-tail_days:],hf,[MMM, MMM+1.0]]); ax.legend(fontsize=7); ax.grid(True,lw=.4)
     st.pyplot(fig,use_container_width=True); plt.close(fig)
 
-    m1,m2,m3=st.columns(3)
-    mcard(m1,"Min Forecast",f"{hf.min():.4f} °C")
-    mcard(m2,"Max Forecast",f"{hf.max():.4f} °C")
-    mcard(m3,"Mean Forecast",f"{hf.mean():.4f} °C")
+    # ── METRIC CARDS EKOLOGIS ────────────────────────────────
+    sec("🌡️ Status Termal Ekologis – Ringkasan")
+    m1,m2,m3,m4 = st.columns(4)
+    mcard(m1, "MMM Historis",     f"{MMM:.3f}°C",   "Maximum Monthly Mean")
+    mcard(m2, "Hari Normal 🟢",   f"{n_normal} hari",  f"{n_normal/STEPS*100:.0f}% periode")
+    mcard(m3, "Hari Waspada 🟡",  f"{n_waspada} hari", f"{n_waspada/STEPS*100:.0f}% periode")
+    mcard(m4, "Hari Kritis 🔴",   f"{n_kritis} hari",  f"{n_kritis/STEPS*100:.0f}% periode")
 
-    sec("📋 Tabel – Sebelum & Sesudah Denormalisasi")
+    # ── ALERT NARASI OTOMATIS ────────────────────────────────
+    if n_kritis > 0:
+        alert_box("crit",
+            f"⚠️ <b>PERINGATAN KRITIS:</b> Terdeteksi <b>{n_kritis} hari</b> dengan SPL melebihi "
+            f"ambang bleaching (≥ MMM+1°C = {MMM+1:.2f}°C). "
+            f"Anomali maksimum: <b>+{max_anomali:.3f}°C</b>. "
+            f"Risiko pemutihan karang tinggi — disarankan aktivasi protokol pemantauan ekosistem segera. "
+            f"Hari kritis pertama: <b>{tgl_kritis[0] if tgl_kritis else '-'}</b>.")
+    elif n_waspada > 0:
+        alert_box("warn",
+            f"⚡ <b>ZONA WASPADA:</b> Terdeteksi <b>{n_waspada} hari</b> dengan SPL berada di zona waspada "
+            f"(antara MMM dan MMM+1°C = {MMM:.2f}–{MMM+1:.2f}°C). "
+            f"Karang mulai termonitor tekanan termal. "
+            f"Pemantauan berkala ekosistem terumbu karang disarankan. "
+            f"Zona waspada mulai: <b>{tgl_waspada[0] if tgl_waspada else '-'}</b>.")
+    else:
+        alert_box("normal",
+            f"✅ <b>KONDISI NORMAL:</b> Seluruh {STEPS} hari periode forecast berada di bawah MMM ({MMM:.2f}°C). "
+            f"Tidak ada indikasi tekanan termal pada ekosistem terumbu karang. "
+            f"Kondisi perairan diprediksi aman untuk aktivitas konservasi.")
+
+    ref_box(
+        "Ambang bleaching mengacu pada <b>NOAA Coral Reef Watch (CRW)</b>: suhu ≥1°C di atas Maximum Monthly Mean (MMM) "
+        "didefinisikan sebagai ambang bleaching (Glynn & D'Croz, 1990). "
+        "Zona waspada (0–1°C di atas MMM) mengacu pada HotSpot product NOAA CRW. "
+        "Sumber: <a href='https://coralreefwatch.noaa.gov/product/5km/methodology.php' target='_blank'>coralreefwatch.noaa.gov</a> · "
+        "<a href='https://www.aoml.noaa.gov/threats-to-coral/' target='_blank'>aoml.noaa.gov</a>"
+    )
+
+    # ── GRAFIK ANOMALI ───────────────────────────────────────
+    sec("📊 Anomali SPL terhadap MMM Historis")
+    fig2, ax2 = plt.subplots(figsize=(14, 3.5))
+    bar_colors = [PAL["crit"] if a >= 1.0 else PAL["warn"] if a >= 0.0 else PAL["normal"]
+                  for a in anomali_fc]
+    ax2.bar(range(STEPS), anomali_fc, color=bar_colors, alpha=0.85, width=0.8)
+    ax2.axhline(0,   color=PAL["warn"],   lw=1.5, ls="--", alpha=.8,
+                label=f"Ambang Waspada = MMM ({MMM:.2f}°C)")
+    ax2.axhline(1.0, color=PAL["crit"],   lw=1.5, ls="--", alpha=.8,
+                label="Ambang Kritis = MMM+1°C")
+    ax2.axhline(0,   color="#64748b",     lw=0.8, ls="-",  alpha=.5)
+    ax2.set_title("Anomali SPL Forecast terhadap MMM Historis")
+    ax2.set_xlabel("Hari ke-"); ax2.set_ylabel("Anomali (°C)")
+    ax2.legend(fontsize=8); ax2.grid(True, lw=.4, axis="y")
+
+    # Anotasi max anomali
+    if max_anomali > 0:
+        idx_max = np.argmax(anomali_fc)
+        ax2.annotate(f"+{max_anomali:.3f}°C",
+                     xy=(idx_max, anomali_fc[idx_max]),
+                     xytext=(idx_max, anomali_fc[idx_max]+0.05),
+                     fontsize=8, color=PAL["crit"], ha="center", fontweight="bold")
+    st.pyplot(fig2, use_container_width=True); plt.close(fig2)
+
+    narasi(
+        f"Anomali dihitung terhadap MMM historis = **{MMM:.3f}°C**. "
+        f"Batang **hijau** = di bawah MMM (normal), **kuning** = zona waspada (0–1°C di atas MMM), "
+        f"**merah** = zona kritis (≥1°C di atas MMM, ambang bleaching NOAA CRW)."
+    )
+
+    # ── TABEL LENGKAP ────────────────────────────────────────
+    sec("📋 Tabel – Sebelum & Sesudah Denormalisasi + Status Ekologis")
     ca,cb=st.columns(2)
     with ca:
         st.markdown("**Sebelum Denormalisasi**")
@@ -801,16 +908,28 @@ with t5:
             .style.format({"Trend (norm)":"{:.5f}","Seasonal (norm)":"{:.5f}"}),
             use_container_width=True)
     with cb:
-        st.markdown("**Setelah Denormalisasi (°C)**")
-        df_out=pd.DataFrame({"Periode":range(1,STEPS+1),"Tanggal":fut_dates,
-            "Trend (°C)":np.round(tf,4),"Seasonal (°C)":np.round(sf,4),
-            "SST Pred (°C)":np.round(hf,4)})
+        st.markdown("**Setelah Denormalisasi + Status Ekologis**")
+        df_out=pd.DataFrame({
+            "Periode":range(1,STEPS+1),
+            "Tanggal":fut_dates,
+            "Trend (°C)":np.round(tf,4),
+            "Seasonal (°C)":np.round(sf,4),
+            "SST Pred (°C)":np.round(hf,4),
+            "Anomali vs MMM":np.round(anomali_fc,4),
+            "Status":status_fc,
+        })
         st.dataframe(df_out.style
-            .format({"Trend (°C)":"{:.4f}","Seasonal (°C)":"{:.4f}","SST Pred (°C)":"{:.4f}"})
-            .background_gradient(subset=["SST Pred (°C)"],cmap="Blues"),
+            .format({"Trend (°C)":"{:.4f}","Seasonal (°C)":"{:.4f}",
+                     "SST Pred (°C)":"{:.4f}","Anomali vs MMM":"{:+.4f}"})
+            .background_gradient(subset=["SST Pred (°C)"],cmap="RdYlBu_r"),
             use_container_width=True)
-    st.download_button("⬇ Download Future CSV",
-        df_out.to_csv(index=False).encode(),"future_forecast.csv","text/csv")
-    narasi(f"Proyeksi SST {STEPS} hari: **{hf.min():.4f}–{hf.max():.4f}°C**, "
-           f"rata-rata **{hf.mean():.4f}°C**. "
-           f"STL di-fit pada full data ({n} baris) untuk window terbaik.")
+
+    st.download_button("⬇ Download Future CSV + Status Ekologis",
+        df_out.to_csv(index=False).encode(),"future_forecast_ekologis.csv","text/csv")
+
+    narasi(
+        f"Proyeksi SST {STEPS} hari: **{hf.min():.4f}–{hf.max():.4f}°C**, "
+        f"rata-rata **{hf.mean():.4f}°C**. "
+        f"MMM historis = **{MMM:.3f}°C** · "
+        f"🟢 Normal: {n_normal} hari · 🟡 Waspada: {n_waspada} hari · 🔴 Kritis: {n_kritis} hari."
+    )
