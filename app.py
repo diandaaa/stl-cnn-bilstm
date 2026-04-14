@@ -219,27 +219,6 @@ def generate_random_sst(n=1080, seed=42):
                          "sst": np.round(sst,5)})
 
 # ═══════════════════════════════════════════════════════════════
-# HELPER: seasonal tile yang nyambung ke akhir trainval
-# ═══════════════════════════════════════════════════════════════
-def make_seasonal_tile(s_arr, periode):
-    """
-    Buat tile seasonal sepanjang 'periode' yang:
-    1. Mulai dari nilai terakhir s_arr (gap = 0)
-    2. Berbentuk sinus murni → smooth dan tidak lompat
-    Dipakai menggantikan s[-periode:] saat tiling forecast.
-    """
-    amp   = float(np.std(s_arr) * np.sqrt(2))   # estimasi amplitudo dari std
-    amp   = max(amp, 1e-6)
-    last  = float(s_arr[-1])
-    slope = float(s_arr[-1] - s_arr[-2])
-    # phase supaya sin(phase0) = last/amp
-    phase0 = np.arcsin(np.clip(last / amp, -1.0, 1.0))
-    if slope < 0:
-        phase0 = np.pi - phase0
-    t_tile = np.arange(periode)
-    return (amp * np.sin(2 * np.pi * t_tile / periode + phase0)).astype(np.float32)
-
-# ═══════════════════════════════════════════════════════════════
 # MHW (Hobday et al. 2016)
 # ═══════════════════════════════════════════════════════════════
 def hitung_threshold_mhw(y_full):
@@ -309,7 +288,7 @@ with st.sidebar:
     s_lr    =st.number_input("LR seasonal", value=0.0005,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",  30,365,180,10)
+    lookback  =st.slider("Lookback",  30,365,90,10)
     epochs    =st.slider("Max epochs",10,500,100,10)
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=3)
     seed      =st.number_input("Random seed",value=42)
@@ -615,10 +594,7 @@ with t3:
 
         # seasonal test: tiling dengan tile yang nyambung ke akhir trainval
         s_full_s=np.concatenate([season_train_s,season_val_s])
-        _s_orig = np.concatenate([season_train, season_val])   # ruang asli (belum norm)
-        _tile_orig = make_seasonal_tile(_s_orig, periode)
-        _tile_norm = sc_s.transform(_tile_orig.reshape(-1,1)).flatten().astype(np.float32)
-        s_tiled = np.concatenate([s_full_s, _tile_norm])
+        s_tiled = np.concatenate([s_full_s, s_full_s[-periode:]])
         sp_te_s=[]
         for i in range(n_test):
             end_s  =min(len(s_full_s)-periode+i,len(s_tiled))
@@ -676,35 +652,19 @@ with t3:
     mae_model  = mae_fn(y_te_true, h_te)
     mae_mean   = mae_fn(y_te_true, mean_baseline)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4))
-
-    # Kiri: overlay tiga garis
-    axes[0].plot(d_te, y_te_true,     color=PAL["actual"], lw=2.0, alpha=0.6,
-                 label="Actual", zorder=3)
-    axes[0].plot(d_te, h_te,          color=PAL["test"],   lw=1.8,
-                 label="CNN-BiLSTM+STL", zorder=4)
-    axes[0].plot(d_te, mean_baseline,  color="#94a3b8",    lw=1.5, ls="--",
-                 label=f"Mean baseline ({MEAN_SST_TRAINVAL:.3f}°C)", zorder=2)
-    axes[0].axhline(THRESHOLD_MHW_TRAINVAL, color=PAL["warn"], lw=1.2, ls=":", alpha=.7,
-                    label=f"P90 MHW = {THRESHOLD_MHW_TRAINVAL:.3f}°C")
-    axes[0].set_title("Actual vs Model vs Mean Baseline")
-    axes[0].set_ylabel("SST (°C)")
-    tight_ylim(axes[0], [y_te_true, h_te, mean_baseline])
-    axes[0].legend(fontsize=8); axes[0].grid(True, lw=.4)
-
-    # Kanan: bar chart MAPE & MAE
-    metrics   = ["MAPE (%)", "MAE (°C)"]
-    val_model = [mape_model, mae_model]
-    val_mean  = [mape_mean,  mae_mean]
-    xb = np.arange(len(metrics)); wb = 0.35
-    b1 = axes[1].bar(xb-wb/2, val_model, wb, label="CNN-BiLSTM+STL", color=PAL["test"],  alpha=0.85)
-    b2 = axes[1].bar(xb+wb/2, val_mean,  wb, label="Mean Baseline",  color="#94a3b8", alpha=0.85)
-    for bar in list(b1)+list(b2):
-        axes[1].text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.0003,
-                     f"{bar.get_height():.4f}", ha="center", va="bottom", fontsize=8)
-    axes[1].set_xticks(xb); axes[1].set_xticklabels(metrics)
-    axes[1].set_title("Metrik: Model vs Mean Baseline")
-    axes[1].legend(fontsize=9); axes[1].grid(True, lw=.4, axis="y")
+    fig, ax = plt.subplots(figsize=(14, 4))
+    ax.plot(d_te, y_te_true,    color=PAL["actual"], lw=2.0, alpha=0.6,
+            label="Actual", zorder=3)
+    ax.plot(d_te, h_te,         color=PAL["test"],   lw=1.8,
+            label="CNN-BiLSTM+STL", zorder=4)
+    ax.plot(d_te, mean_baseline, color="#94a3b8",    lw=1.5, ls="--",
+            label=f"Mean baseline ({MEAN_SST_TRAINVAL:.3f}°C)", zorder=2)
+    ax.axhline(THRESHOLD_MHW_TRAINVAL, color=PAL["warn"], lw=1.2, ls=":", alpha=.7,
+               label=f"P90 MHW = {THRESHOLD_MHW_TRAINVAL:.3f}°C")
+    ax.set_title("Actual vs Model vs Mean Baseline")
+    ax.set_ylabel("SST (°C)")
+    tight_ylim(ax, [y_te_true, h_te, mean_baseline])
+    ax.legend(fontsize=8); ax.grid(True, lw=.4)
     plt.tight_layout()
     st.pyplot(fig, use_container_width=True); plt.close(fig)
 
@@ -801,11 +761,7 @@ with t5:
             tf_s=recursive_forecast(TM,window_t_fc,STEPS)
             tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
             # seasonal future: tiling dengan tile yang nyambung ke akhir data
-            _stl_full_orig = STL(y_full, period=periode, robust=stl_robust).fit()
-            _sf_orig = _stl_full_orig.seasonal
-            _sf_tile_orig = make_seasonal_tile(_sf_orig, periode)
-            _sf_tile_norm = sc_s.transform(_sf_tile_orig.reshape(-1,1)).flatten().astype(np.float32)
-            sf_tiled=np.concatenate([sf_full_s, _sf_tile_norm])
+            sf_tiled=np.concatenate([sf_full_s, sf_full_s[-periode:]])
             sf_fc_list=[]
             for i in range(STEPS):
                 end  =min(len(sf_full_s)-periode+i,len(sf_tiled))
