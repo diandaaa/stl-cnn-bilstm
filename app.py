@@ -219,6 +219,27 @@ def generate_random_sst(n=1080, seed=42):
                          "sst": np.round(sst,5)})
 
 # ═══════════════════════════════════════════════════════════════
+# HELPER: seasonal tile yang nyambung ke akhir trainval
+# ═══════════════════════════════════════════════════════════════
+def make_seasonal_tile(s_arr, periode):
+    """
+    Buat tile seasonal sepanjang 'periode' yang:
+    1. Mulai dari nilai terakhir s_arr (gap = 0)
+    2. Berbentuk sinus murni → smooth dan tidak lompat
+    Dipakai menggantikan s[-periode:] saat tiling forecast.
+    """
+    amp   = float(np.std(s_arr) * np.sqrt(2))   # estimasi amplitudo dari std
+    amp   = max(amp, 1e-6)
+    last  = float(s_arr[-1])
+    slope = float(s_arr[-1] - s_arr[-2])
+    # phase supaya sin(phase0) = last/amp
+    phase0 = np.arcsin(np.clip(last / amp, -1.0, 1.0))
+    if slope < 0:
+        phase0 = np.pi - phase0
+    t_tile = np.arange(periode)
+    return (amp * np.sin(2 * np.pi * t_tile / periode + phase0)).astype(np.float32)
+
+# ═══════════════════════════════════════════════════════════════
 # MHW (Hobday et al. 2016)
 # ═══════════════════════════════════════════════════════════════
 def hitung_threshold_mhw(y_full):
@@ -592,9 +613,12 @@ with t3:
         tp_te=sc_t.inverse_transform(
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
-        # seasonal test: tiling (sama persis kode asli)
+        # seasonal test: tiling dengan tile yang nyambung ke akhir trainval
         s_full_s=np.concatenate([season_train_s,season_val_s])
-        s_tiled =np.concatenate([s_full_s,s_full_s[-periode:]])
+        _s_orig = np.concatenate([season_train, season_val])   # ruang asli (belum norm)
+        _tile_orig = make_seasonal_tile(_s_orig, periode)
+        _tile_norm = sc_s.transform(_tile_orig.reshape(-1,1)).flatten().astype(np.float32)
+        s_tiled = np.concatenate([s_full_s, _tile_norm])
         sp_te_s=[]
         for i in range(n_test):
             end_s  =min(len(s_full_s)-periode+i,len(s_tiled))
@@ -728,8 +752,12 @@ with t5:
             window_t_fc=tf_full_s[-lookback:]
             tf_s=recursive_forecast(TM,window_t_fc,STEPS)
             tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
-            # seasonal future: tiling (sama persis kode asli)
-            sf_tiled=np.concatenate([sf_full_s,sf_full_s[-periode:]])
+            # seasonal future: tiling dengan tile yang nyambung ke akhir data
+            _stl_full_orig = STL(y_full, period=periode, robust=stl_robust).fit()
+            _sf_orig = _stl_full_orig.seasonal
+            _sf_tile_orig = make_seasonal_tile(_sf_orig, periode)
+            _sf_tile_norm = sc_s.transform(_sf_tile_orig.reshape(-1,1)).flatten().astype(np.float32)
+            sf_tiled=np.concatenate([sf_full_s, _sf_tile_norm])
             sf_fc_list=[]
             for i in range(STEPS):
                 end  =min(len(sf_full_s)-periode+i,len(sf_tiled))
