@@ -190,39 +190,37 @@ def fdGPH(x,bw=0.5):
 # ═══════════════════════════════════════════════════════════════
 # GENERATE DATA SINTETIS — mirip sst_kotak.csv, versi ringan
 # ═══════════════════════════════════════════════════════════════
-def generate_random_sst(n=1095, seed=42):
+def generate_random_sst(n=1080, seed=42):
     """
-    Mensimulasikan karakteristik data sst_kotak.csv secara ringkas:
+    Mensimulasikan karakteristik data sst_kotak.csv (2015-2026):
 
-    Data asli (4071 hari, 2015-2026):
-      - Mean  : 29.4814 °C
-      - Std   : 0.4966  °C
-      - Range : 27.38 – 30.66 °C
-      - Tren  : +0.0526 °C/tahun (linier lambat)
-      - Musiman: dua harmonik periode 365 hari
-          H1: amp=0.304, phase=+0.458 rad
-          H2: amp=0.527, phase=-2.973 rad  (dominan)
-      - Noise AR(1): std=0.274, koef=0.835 (korelasi tinggi)
+    Dari analisis data asli:
+      - Tren    : linier +0.046°C/tahun + osilasi multi-year ~5.6 tahun, amp ~0.20°C
+      - Musiman : periode 180 hari, H1 amp=0.343, phase=2.340 (dominan)
+      - Noise   : AR(1) std=0.236, koef=0.815 (korelasi tinggi)
+      - Range   : 27.38 – 30.66°C
+      - Mean    : ~29.48°C
 
-    Versi ringan: default 1095 hari (~3 tahun) = 3 siklus penuh
-    → cukup untuk STL + training, jauh lebih cepat dari 4071 hari
+    Default 1080 hari = 6 siklus penuh @ 180 hari → seasonal model bisa belajar
     """
     rng = np.random.default_rng(seed)
     t   = np.arange(n)
 
-    # tren linier: +0.0526 °C/tahun
-    trend = 29.1884 + (0.0526 / 365) * t
+    # tren: linier lambat + osilasi multi-year (~2035 hari ≈ 5.6 tahun)
+    trend_linear = 29.2428 + (0.046 / 365) * t
+    trend_cycle  = 0.20 * np.sin(2 * np.pi * t / 2035 - 0.5)
+    trend        = trend_linear + trend_cycle
 
-    # dua harmonik musiman (phase & amplitude dari fit data asli)
-    seasonal = (0.304 * np.sin(2*np.pi*t/365 + 0.458)
-              + 0.527 * np.sin(4*np.pi*t/365 - 2.973))
+    # musiman periode 180 hari — satu harmonik dominan
+    seasonal = 0.343 * np.sin(2 * np.pi * t / 180 + 2.340)
 
-    # noise AR(1): std=0.274, koef=0.835
-    eps   = rng.normal(0, 0.274 * np.sqrt(1 - 0.835**2), n)
+    # noise AR(1): std=0.236, koef=0.815
+    alpha = 0.815
+    eps   = rng.normal(0, 0.236 * np.sqrt(1 - alpha**2), n)
     noise = np.zeros(n)
     noise[0] = eps[0]
     for i in range(1, n):
-        noise[i] = 0.835 * noise[i-1] + eps[i]
+        noise[i] = alpha * noise[i-1] + eps[i]
 
     sst = np.clip(trend + seasonal + noise, 27.38, 30.66)
     dates = pd.date_range("2015-01-01", periods=n, freq="D")
@@ -271,8 +269,8 @@ with st.sidebar:
     else:
         date_col = "tgl"
         sst_col  = "sst"
-        gen_n    = st.slider("Jumlah hari", 365, 1460, 1095, 30,
-                             help="1095 hari = 3 siklus tahunan penuh, cukup untuk training")
+        gen_n    = st.slider("Jumlah hari", 540, 1440, 1080, 60,
+                             help="1080 hari = 6 siklus @ 180 hari, minimal agar seasonal model cukup")
         gen_seed = st.number_input("Seed", value=42,
                                    help="Ganti angka untuk variasi data berbeda")
 
@@ -284,9 +282,9 @@ with st.sidebar:
 
     st.markdown("### 📅 STL")
     auto_period  = st.checkbox("Auto-detect period (spektral)", value=True)
-    manual_period = 365
+    manual_period = 180
     if not auto_period:
-        manual_period = st.number_input("Period manual", 2, 730, 365)
+        manual_period = st.number_input("Period manual", 2, 730, 180)
     stl_robust = st.checkbox("STL robust", value=True)
 
     st.markdown("### 🧠 Trend Model")
@@ -305,8 +303,8 @@ with st.sidebar:
     s_lr     = st.number_input("LR seasonal", value=0.001, format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback   = st.slider("Lookback", 30, 365, 90, 10,
-                           help="90 hari = ~1/4 periode, cukup untuk data 3 tahun")
+    lookback   = st.slider("Lookback", 30, 180, 90, 10,
+                           help="90 hari = setengah periode 180 hari")
     epochs     = st.slider("Max epochs", 10, 300, 50, 10)
     batch_size = st.selectbox("Batch size", [16, 32, 64, 128], index=1)
     seed       = st.number_input("Random seed", value=42)
@@ -355,10 +353,10 @@ Data sintetis dibuat mengikuti karakteristik data SST riil (sst_kotak.csv, 2015�
 | Mean SST | 29.48°C | ~29.48°C |
 | Range | 27.38–30.66°C | sama |
 | Tren | +0.053°C/tahun | sama |
-| Musiman H1 | amp=0.30, phase=+0.46 | sama |
-| Musiman H2 | amp=0.53, phase=−2.97 | sama |
-| Noise AR(1) | std=0.274, α=0.835 | sama |
-| **Jumlah data** | **4071 hari** | **1095 hari (default)** |
+| Tren siklus | osilasi ~5.6 tahun, amp=0.20°C | sama |
+| Musiman | periode 180 hari, amp=0.343 | sama |
+| Noise AR(1) | std=0.236, α=0.815 | sama |
+| **Jumlah data** | **4071 hari** | **1080 hari (default)** |
         """)
     st.stop()
 
