@@ -396,7 +396,7 @@ if date_col not in df_raw.columns or sst_col not in df_raw.columns:
     st.stop()
 
 df = df_raw.copy()
-df[date_col] = pd.to_datetime(df[date_col], dayfirst=False, infer_datetime_format=True)
+df[date_col] = pd.to_datetime(df[date_col], dayfirst=False)
 df = df.sort_values(date_col).set_index(date_col)
 y_full = df[sst_col].values.astype(float); dates = df.index; n = len(y_full)
 n_val   = int(n * val_r)
