@@ -645,17 +645,9 @@ with t3:
             recursive_forecast(TM,window_t,n_test).reshape(-1,1)).flatten()
 
         s_full_s=np.concatenate([season_train_s,season_val_s])
-        s_tiled =np.concatenate([s_full_s,s_full_s[-periode:]])
-        sp_te_s=[]
-        for i in range(n_test):
-            end_s  =min(len(s_full_s)-periode+i,len(s_tiled))
-            start_s=max(end_s-lookback,0)
-            win_s  =s_tiled[start_s:end_s]
-            if len(win_s)<lookback: win_s=np.pad(win_s,(lookback-len(win_s),0),mode='edge')
-            sp_te_s.append(win_s)
-        sp_te=sc_s.inverse_transform(
-            predict_model(SM,np.array(sp_te_s,dtype=np.float32)).reshape(-1,1)).flatten()
         window_s=s_full_s[-lookback:]
+        sp_te=sc_s.inverse_transform(
+            recursive_forecast(SM,window_s,n_test).reshape(-1,1)).flatten()
 
     h_tr=tp_tr+sp_tr; h_vl=tp_vl+sp_vl; h_te=tp_te+sp_te
     y_tr_true=y_full[lookback:n_train]
@@ -780,15 +772,9 @@ with t5:
             window_t_fc=tf_full_s[-lookback:]
             tf_s=recursive_forecast(TM,window_t_fc,STEPS)
             tf=sc_t.inverse_transform(tf_s.reshape(-1,1)).flatten()
-            sf_tiled=np.concatenate([sf_full_s,sf_full_s[-periode:]])
-            sf_fc_list=[]
-            for i in range(STEPS):
-                end  =min(len(sf_full_s)-periode+i,len(sf_tiled))
-                start=max(end-lookback,0)
-                win  =sf_tiled[start:end]
-                if len(win)<lookback: win=np.pad(win,(lookback-len(win),0),mode='edge')
-                sf_fc_list.append(win)
-            sf_s=predict_model(SM,np.array(sf_fc_list,dtype=np.float32))
+            sf_full_s=st.session_state["stl_full_sf"]
+            window_s_fc=sf_full_s[-lookback:]
+            sf_s=recursive_forecast(SM,window_s_fc,STEPS)
             sf=sc_s.inverse_transform(sf_s.reshape(-1,1)).flatten()
             hf=tf+sf
             st.session_state.update({"fc_steps":STEPS,"fc_tf_s":tf_s,
