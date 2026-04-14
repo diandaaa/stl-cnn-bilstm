@@ -67,7 +67,7 @@ torch.set_float32_matmul_precision("medium")
 torch.set_num_threads(max(1, torch.get_num_threads()))
 
 class TrendModel(nn.Module):
-    def __init__(self, lb, cf=32, ks=5, lu=64, du=32, drop=0.2):
+    def __init__(self, lb, cf=16, ks=5, lu=64, du=32, drop=0.2):
         super().__init__()
         self.ks=ks; self.conv=nn.Conv1d(1,cf,ks)
         self.bilstm=nn.LSTM(cf,lu,batch_first=True,bidirectional=True)
@@ -79,7 +79,7 @@ class TrendModel(nn.Module):
         return self.fc2(F.relu(self.fc1(self.drop(out[:,-1,:])))).squeeze(-1)
 
 class SeasonModel(nn.Module):
-    def __init__(self, lb, cf=64, ks=5, lu=64, du=16):
+    def __init__(self, lb, cf=32, ks=3, lu=32, du=16):
         super().__init__()
         self.ks=ks; self.conv=nn.Conv1d(1,cf,ks)
         self.bilstm=nn.LSTM(cf,lu,batch_first=True,bidirectional=True)
@@ -273,22 +273,22 @@ with st.sidebar:
     stl_robust=True  # selalu robust
 
     st.markdown("### 🧠 Trend Model")
-    t_conv_f=st.slider("Conv1D filters",  8,128,32, 8)
+    t_conv_f=st.slider("Conv1D filters",  8,128,16, 8)
     t_kern  =st.slider("Kernel size",     2, 15, 5, 1)
     t_lstm  =st.slider("BiLSTM units",   16,256,64,16)
     t_drop  =st.slider("Dropout",        0.0,0.5,0.2,0.05)
     t_dense =st.slider("Dense units",    8,128,32, 8)
-    t_lr    =st.number_input("LR trend",  value=0.0007,format="%.4f")
+    t_lr    =st.number_input("LR trend",  value=0.001,format="%.4f")
 
     st.markdown("### 🧠 Seasonal Model")
-    s_conv_f=st.slider("Conv1D filters (S)", 8,128,64, 8)
-    s_kern  =st.slider("Kernel size (S)",    2, 15, 5, 1)
-    s_lstm  =st.slider("BiLSTM units (S)",  16,256,64,16)
+    s_conv_f=st.slider("Conv1D filters (S)", 8,128,32, 8)
+    s_kern  =st.slider("Kernel size (S)",    2, 15, 3, 1)
+    s_lstm  =st.slider("BiLSTM units (S)",  16,256,32,16)
     s_dense =st.slider("Dense units (S)",   4, 64,16, 4)
-    s_lr    =st.number_input("LR seasonal", value=0.0005,format="%.4f")
+    s_lr    =st.number_input("LR seasonal", value=0.001,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",  30,365,90,10)
+    lookback  =st.slider("Lookback",  30,365,180,10)
     epochs    =st.slider("Max epochs",10,500,100,10)
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=3)
     seed      =st.number_input("Random seed",value=42)
