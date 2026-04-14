@@ -309,7 +309,7 @@ with st.sidebar:
     s_lr    =st.number_input("LR seasonal", value=0.0005,format="%.4f")
 
     st.markdown("### ⚙️ Training")
-    lookback  =st.slider("Lookback",  30,365,90,10)
+    lookback  =st.slider("Lookback",  30,365,180,10)
     epochs    =st.slider("Max epochs",10,500,100,10)
     batch_size=st.selectbox("Batch size",[16,32,64,128],index=3)
     seed      =st.number_input("Random seed",value=42)
